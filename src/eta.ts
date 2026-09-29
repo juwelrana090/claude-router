@@ -33,6 +33,20 @@ function median(a: number[]): number {
 
 const clampEta = (ms: number): number => Math.min(MAX_ETA_MS, Math.max(MIN_ETA_MS, Math.round(ms)));
 
+// A sub-second window wildly overstates speed (outSoFar over a 0.25s floor),
+// which made the first post-token ETA visibly jump upward before collapsing
+// back. Live speed needs at least one full ticker period of samples.
+const LIVE_MIN_WINDOW_MS = 1000;
+
+/** Live output tokens/sec, or null until there is a window worth dividing by. */
+function liveSpeedOf(f: live.InFlight, now: number): number | null {
+  const out = f.outSoFar ?? 0;
+  if (!f.firstTokenAt || out <= 0) return null;
+  const windowMs = now - f.firstTokenAt;
+  if (windowMs < LIVE_MIN_WINDOW_MS) return null;
+  return out / (windowMs / 1000);
+}
+
 function ring(provider: string, model: string): Ring {
   const k = `${provider}/${model}`;
   let r = rings.get(k);
@@ -52,9 +66,11 @@ function pushCapped(arr: number[], v: number): void {
 export function feedHistory(
   provider: string,
   model: string,
-  sample: { status: number; out: number; ttftMs?: number | null; outputTokensPerSec?: number | null }
+  sample: { status: number; out: number; ttftMs?: number | null; outputTokensPerSec?: number | null; aborted?: boolean }
 ): void {
-  if (sample.status >= 400 || !(sample.out > 0)) return;
+  // A mid-stream abort is a partial answer, not a sample of what this model
+  // delivers: it must not shape the ETA history.
+  if (sample.aborted || sample.status >= 400 || !(sample.out > 0)) return;
   const r = ring(provider, model);
   pushCapped(r.out, sample.out);
   if (sample.outputTokensPerSec && sample.outputTokensPerSec > 0) pushCapped(r.tps, sample.outputTokensPerSec);
@@ -77,9 +93,7 @@ function computeEta(f: live.InFlight, now: number): { etaMs: number | null; expe
   else if (maxTokens > 0) expected = maxTokens;
 
   const hasHistory = r.tps.length >= MIN_HISTORY;
-  const liveSpeed = f.firstTokenAt && outSoFar > 0
-    ? outSoFar / Math.max(0.25, (now - f.firstTokenAt) / 1000)
-    : null;
+  const liveSpeed = liveSpeedOf(f, now);
   // 70/30 blend between live speed and the historical median speed.
   const blend = liveSpeed !== null && medTps > 0
     ? 0.7 * liveSpeed + 0.3 * medTps
@@ -132,11 +146,10 @@ function tick(): void {
     const now = Date.now();
     for (const f of live.inFlight.values()) {
       const { etaMs, expected } = computeEta(f, now);
+      const speed = liveSpeedOf(f, now);
       f.expectedOutputTokens = expected;
       f.etaMs = etaMs;
-      f.tokensPerSec = f.firstTokenAt && (f.outSoFar ?? 0) > 0
-        ? r2((f.outSoFar ?? 0) / Math.max(0.25, (now - f.firstTokenAt) / 1000))
-        : null;
+      f.tokensPerSec = speed ? r2(speed) : null;
       live.broadcast("eta", etaFrame(f, now, etaMs, expected));
     }
   } catch (e) {
@@ -158,8 +171,37 @@ export function begin(f: live.InFlight): void {
   try {
     if (f.outSoFar === undefined) f.outSoFar = 0;
     if (f.firstTokenAt === undefined) f.firstTokenAt = null;
+    sessionOpen(f);
     ensureTicker();
   } catch { /* never fail the request path */ }
+}
+
+/** Open the session window at request start so the statusline/UI session tail
+ *  exists during the first (still-running) request, not only after it lands. */
+function sessionOpen(f: live.InFlight): void {
+  if (!f.sessionId) return;
+  const now = Date.now();
+  let s = sessions.get(f.sessionId);
+  if (s && now - s.lastActiveAt > SESSION_IDLE_MS) s = undefined;
+  if (s) return; // an already-open window is only ever bumped, never reset
+  s = {
+    sessionId: f.sessionId,
+    startedAt: f.clientStartedAt ?? f.startedAt,
+    lastActiveAt: now,
+    requests: 0,
+    totalMs: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    cost: 0,
+    lastProvider: f.provider,
+    lastModel: f.model,
+  };
+  sessions.set(f.sessionId, s);
+  while (sessions.size > SESSIONS_MAX) {
+    const oldest = sessions.keys().next().value;
+    if (oldest === undefined) break;
+    sessions.delete(oldest);
+  }
 }
 
 export function firstToken(id: string): void {
@@ -288,6 +330,7 @@ export function etaSnapshot() {
   const now = Date.now();
   const running = [...live.inFlight.values()].map((f) => {
     const { etaMs, expected } = computeEta(f, now);
+    const speed = liveSpeedOf(f, now);
     return {
       requestId: f.id,
       sessionId: f.sessionId ?? null,
@@ -300,9 +343,7 @@ export function etaSnapshot() {
       etaMs,
       expectedOutputTokens: expected,
       outputTokensSoFar: f.outSoFar ?? 0,
-      tokensPerSec: f.firstTokenAt && (f.outSoFar ?? 0) > 0
-        ? r2((f.outSoFar ?? 0) / Math.max(0.25, (now - f.firstTokenAt) / 1000))
-        : null,
+      tokensPerSec: speed ? r2(speed) : null,
       firstTokenAt: f.firstTokenAt ?? null,
       ttftMs: f.firstTokenAt ? Math.max(0, f.firstTokenAt - (f.clientStartedAt ?? f.startedAt)) : null,
     };
@@ -310,34 +351,52 @@ export function etaSnapshot() {
   return { ts: now, running, session: activeSession() };
 }
 
-/** Startup: seed the rings read-only from logs/usage.jsonl (no rewrite/migration). */
-export function seedHistory(): void {
-  const file = path.join(ROOT, "logs", "usage.jsonl");
-  if (!fs.existsSync(file)) return;
-  const rl = readline.createInterface({
-    input: fs.createReadStream(file, { encoding: "utf8" }),
-    crlfDelay: Infinity,
-  });
-  rl.on("line", (raw) => {
-    const line = raw.trim();
-    if (!line) return;
-    try {
-      const rec = JSON.parse(line) as {
-        provider?: string; model?: string; status?: number; out?: number;
-        ttftMs?: number | null; outputTokensPerSec?: number | null;
-      };
-      feedHistory(rec.provider ?? "unknown", rec.model ?? "unknown", {
-        status: Number(rec.status) || 0,
-        out: Number(rec.out) || 0,
-        ttftMs: typeof rec.ttftMs === "number" ? rec.ttftMs : null,
-        outputTokensPerSec: typeof rec.outputTokensPerSec === "number" ? rec.outputTokensPerSec : null,
-      });
-    } catch { /* corrupt line -> skip */ }
-  });
-  // An unreadable log (EACCES, swapped file) must degrade to empty history,
-  // not surface as an uncaughtException that kills the router at startup.
-  rl.on("error", (e) => {
-    console.warn("[ETA] usage log unreadable -> seeding with empty history:",
-      e instanceof Error ? e.message : String(e));
+/**
+ * Startup: seed the rings read-only from logs/usage.jsonl (no rewrite/migration).
+ * The promise resolves only once the log is fully ingested; index.ts opens the
+ * port after it, so an early request never sees empty history against a
+ * populated log. An unreadable log (EACCES, swapped file) degrades to empty
+ * history instead of an uncaughtException that kills the router at startup.
+ */
+export function seedHistory(): Promise<void> {
+  return new Promise((resolve) => {
+    const file = path.join(ROOT, "logs", "usage.jsonl");
+    if (!fs.existsSync(file)) {
+      resolve();
+      return;
+    }
+    const rl = readline.createInterface({
+      input: fs.createReadStream(file, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    let done = false;
+    const finish = () => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    };
+    rl.on("line", (raw) => {
+      const line = raw.trim();
+      if (!line) return;
+      try {
+        const rec = JSON.parse(line) as {
+          provider?: string; model?: string; status?: number; out?: number;
+          ttftMs?: number | null; outputTokensPerSec?: number | null;
+        };
+        feedHistory(rec.provider ?? "unknown", rec.model ?? "unknown", {
+          status: Number(rec.status) || 0,
+          out: Number(rec.out) || 0,
+          ttftMs: typeof rec.ttftMs === "number" ? rec.ttftMs : null,
+          outputTokensPerSec: typeof rec.outputTokensPerSec === "number" ? rec.outputTokensPerSec : null,
+        });
+      } catch { /* corrupt line -> skip */ }
+    });
+    rl.on("error", (e) => {
+      console.warn("[ETA] usage log unreadable -> seeding with empty history:",
+        e instanceof Error ? e.message : String(e));
+      finish();
+    });
+    rl.on("close", finish); // every line is fed synchronously, so close == seeded
   });
 }

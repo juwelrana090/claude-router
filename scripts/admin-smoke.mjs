@@ -440,6 +440,113 @@ eq("no upstream call from any GET or from opening SSE", upstreamHits.length, 0);
   eq("cooldown gone after reset", (await snapshot()).cooldowns.FLAKY_K1, 0);
 }
 
+// ─────────── 10b. eta SSE frames, live tok/s, usage timing, summary averages ───────────
+{
+  const logFile = path.join(home, "logs", "usage.jsonl");
+  const parseLog = () => fs.readFileSync(logFile, "utf8").trim().split("\n")
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter(Boolean);
+
+  // Standard-Anthropic-shaped gate: real usage lands only in the trailing
+  // message_delta, so live tokens/sec must come from the content-delta estimate.
+  let releaseEta;
+  const heldEta = new Promise((r) => (releaseEta = r));
+  streamGate = async (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":1}}}\n\n');
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+      res.write('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"estimate me "}}\n\n');
+    }
+    res.write('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":9}}\n\n');
+    heldEta.then(() => res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+  };
+
+  const ac = new AbortController();
+  const bodyDone = fetch(R + "/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": ROUTER_KEY },
+    // unique system seed -> a fresh session window with zero completed requests
+    body: JSON.stringify({ model: "slow", stream: true, max_tokens: 100, system: "eta-session-seed", messages: [] }),
+    signal: ac.signal,
+  }).then((r) => r.status);
+
+  const es = await fetch(R + "/admin/events", { headers: { ...H, accept: "text/event-stream" }, signal: ac.signal });
+  const reader = es.body.getReader();
+  const sseDec = new TextDecoder();
+  let buf = "";
+  const nextFrame = async (ms) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const i = buf.indexOf("\n\n");
+      if (i !== -1) {
+        const rawFrame = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const data = /^data: (.*)$/m.exec(rawFrame)?.[1];
+        if (!data) continue;
+        let d = null;
+        try { d = JSON.parse(data); } catch { /* keep scanning */ }
+        return { event: /^event: (.*)$/m.exec(rawFrame)?.[1] ?? "", d };
+      }
+      if (Date.now() > deadline) return null;
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise((r) => setTimeout(() => r({ done: true }), deadline - Date.now())),
+      ]);
+      if (chunk.done) return null;
+      buf += sseDec.decode(chunk.value, { stream: true });
+    }
+  };
+  const findFrame = async (pred, ms) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const f = await nextFrame(deadline - Date.now());
+      if (!f) return null;
+      if (pred(f)) return f;
+    }
+  };
+
+  const run = await findFrame((f) => f.event === "eta" && f.d?.status === "running" && f.d?.tokensPerSec > 0, 8000);
+  t("eta frame: requestId/session/provider/model identified", !!run && typeof run.d.requestId === "string"
+    && typeof run.d.sessionId === "string" && run.d.sessionId.startsWith("u-")
+    && run.d.provider === "slow" && run.d.model === "real-slow", run?.d);
+  t("eta frame: elapsed reported, etaMs clamped (never <= 0)", !!run && run.d.elapsedMs >= 0
+    && (run.d.etaMs === null || run.d.etaMs >= 3000), run?.d);
+  t("live tokens/sec engages mid-stream even when usage lands only at stream end",
+    !!run && run.d.outputTokensSoFar > 0 && run.d.tokensPerSec > 0, run?.d);
+
+  // The session window opens at request start, so the statusline/UI tail exists
+  // before any request of this fresh session has completed.
+  const mid = await (await fetch(R + "/admin/eta", { headers: H })).json();
+  t("/admin/eta returns a snapshot shape", typeof mid.ts === "number" && Array.isArray(mid.running));
+  t("/admin/eta shows the request as running", mid.running.some((r) => r.model === "real-slow"), mid.running);
+  t("session tail exists mid-run with zero completed requests",
+    !!mid.session && mid.session.requests === 0 && mid.session.tokensOut === 0, mid.session);
+
+  releaseEta();
+  eq("the eta-held request reached the client as 200", await bodyDone, 200);
+  const fin = await findFrame((f) => f.event === "eta" && f.d?.status === "done" && f.d?.requestId === run?.d?.requestId, 8000);
+  ac.abort();
+  t("final eta frame: done with total time, no eta left", !!fin && fin.d.durationMs >= 0 && fin.d.etaMs === null
+    && fin.d.outputTokensSoFar >= 9 && fin.d.tokensPerSec > 0, fin?.d);
+
+  await new Promise((r) => setTimeout(r, 250));
+  const line = parseLog().filter((l) => l.alias === "slow" && l.status === 200).at(-1);
+  t("usage log carries the new timing fields",
+    !!line && typeof line.startedAt === "string" && typeof line.firstTokenAt === "string"
+    && typeof line.durationMs === "number" && line.durationMs >= 0
+    && typeof line.ttftMs === "number" && line.ttftMs >= 0
+    && typeof line.outputTokensPerSec === "number" && line.outputTokensPerSec > 0, line);
+
+  const u4 = await (await fetch(R + "/admin/usage/summary?range=1h", { headers: H })).json();
+  const slowAgg = u4.byAlias.find((a) => a.name === "slow");
+  t("usage summary: avgMs per alias", !!slowAgg && slowAgg.avgMs > 0, slowAgg);
+  t("usage summary: avgTokensPerSec per alias", !!slowAgg && slowAgg.avgTokensPerSec > 0, slowAgg);
+  t("usage summary: per-provider timing present",
+    u4.byProvider.length >= 1 && u4.byProvider.every((p) => typeof p.avgMs === "number" && typeof p.avgTokensPerSec === "number"),
+    u4.byProvider.map((p) => p.name));
+}
+
 // ───────────────────────── 11. disabled providers ─────────────────────────
 {
   await call("POST", "/admin/providers/flaky/disable", { version: await version() });

@@ -57,10 +57,10 @@ When the request finishes, exactly one terminal `eta` event with `status: "done"
 
 ### Statusline setup (Claude CLI)
 
-`scripts/statusline.mjs` prints one line: `provider/model - mm:ss elapsed - ~mm:ss left - session tokens - session cost` (shows `~estimating` while ETA is unknown, `claude-router - idle` / `claude-router - offline` otherwise). Enable it in Claude settings:
+`scripts/statusline` prints one line: `provider/model - mm:ss elapsed - ~mm:ss left - session tokens - session cost` (shows `~estimating` while ETA is unknown, `claude-router - idle` / `claude-router - offline` otherwise). The implementation lives in `scripts/statusline.mjs`; `scripts/statusline` is a thin executable wrapper (an extensionless file is not loaded as ESM under `"type": "commonjs"`). Enable it in Claude settings:
 
 ```json
-"statusLine": { "type": "command", "command": "node \"/absolute/path/to/claude-router/scripts/statusline.mjs\"" }
+"statusLine": { "type": "command", "command": "\"/absolute/path/to/claude-router/scripts/statusline\"" }
 ```
 
 Replace the path with your real absolute path to this repo. The script reads `ROUTER_PORT` / `ROUTER_KEY` from the router `.env` (repo root, or set `ROUTER_HOME`) and calls `GET /admin/eta` on 127.0.0.1; it never prints the key and always exits 0.
@@ -81,3 +81,27 @@ i want to use apexcharts for live token monitoring, comarisone, uses
 why use UI and web, (web) need one only. one command use run both server and web
 
 also need icons : /src/ui/icons/\*\*
+
+/web move in /src
+
+logs:
+Yes — everything actionable is done. Final accounting:
+
+**✅ Complete & verified**
+
+1. **ETA / Live Task Time feature** — backend + statusline + UI, adversarially reviewed (15 defects found & fixed), smoke suites **180 PASS / 0 FAIL**, E2E observed live (per-second eta events → terminal done frame → usage record with timing fields)
+2. **One UI only** — old single-file UI and copy-ui deleted; `web/` React SPA (Lobe UI + ApexCharts + your favicon) is the only UI; root `npm run build` produces it
+3. **OpenCode 403** — routes.json fixed (`oc-haiku → opencode/claude-haiku-4-5`, new inference endpoint)
+4. **`npm run dev`** — now compiles _and_ serves
+5. **Logo + 25 icons** — restored to [web/public/](web/public/); favicon inlined in the SPA
+
+**⏳ Waiting on you (3 things)**
+
+1. **Restart the router** — the running process predates everything: `npm run dev` or `npm start`, then open `http://127.0.0.1:21450/ui`
+2. **OpenCode key** — put a paid Console service-account key in `OPENCODE_KEY_1` in `.env` (the free tier is client-locked; no router can use it)
+3. **Git commit** — your `git add .` is stale (deleted files still staged, `web/` unstaged). Say the word and I'll restage + commit
+
+**💬 Offers open (say yes/no)**
+
+- Add your logo as a visible brand mark in the React header
+- Accept query-param key on `/admin/events` so the React UI gets true SSE push instead of 1 s pollings
