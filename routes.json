@@ -45,19 +45,24 @@
       "provider": "deepseek",
       "model": "deepseek-v4-pro",
       "key": "DEEPSEEK_KEY_1",
-      "maxOutputTokens": 32000
+      "fallback": [
+        "glm",
+        "glm-fast",
+        "or-b",
+        "oc-haiku",
+        "oc-free",
+        "ds-flash"
+      ]
     },
     "ds-flash": {
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
-      "key": "DEEPSEEK_KEY_1",
-      "maxOutputTokens": 32000
+      "key": "DEEPSEEK_KEY_1"
     },
     "glm": {
       "provider": "zai",
       "model": "glm-5.3",
       "key": "ZAI_KEY_1",
-      "maxOutputTokens": 32000,
       "fallback": [
         "ds-flash"
       ]
@@ -66,7 +71,6 @@
       "provider": "zai",
       "model": "glm-5.3-flash",
       "key": "ZAI_KEY_1",
-      "maxOutputTokens": 16000,
       "fallback": [
         "glm"
       ]

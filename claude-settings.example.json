@@ -8,8 +8,11 @@
     "ANTHROPIC_AUTH_TOKEN": "<same value as ROUTER_KEY in the router .env>",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "ds-pro",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "ds-flash",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-fast",
     "ANTHROPIC_SMALL_FAST_MODEL": "ds-flash",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION": "or-b",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "OpenRouter free",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "or-b via OpenRouter",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
@@ -18,7 +21,10 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "npm run -s check 1>&2 || exit 2" }
+          {
+            "type": "command",
+            "command": "npm run -s check 1>&2 || exit 2"
+          }
         ]
       }
     ]
