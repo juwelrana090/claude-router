@@ -1,0 +1,25 @@
+{
+  "_note": "Edit freely - the router hot-reloads this file. VERIFY every 'model' string against the provider's current model list.",
+  "defaultModel": "glm",
+  "aliases": {
+    "opus": "ds-pro",
+    "sonnet": "glm",
+    "haiku": "ds-flash"
+  },
+  "providers": {
+    "deepseek":   { "baseURL": "https://api.deepseek.com/anthropic", "auth": "both",      "keys": ["DEEPSEEK_KEY_1", "DEEPSEEK_KEY_2"] },
+    "zai":        { "baseURL": "https://api.z.ai/api/anthropic",     "auth": "both",      "keys": ["ZAI_KEY_1", "ZAI_KEY_2"] },
+    "openrouter": { "baseURL": "https://openrouter.ai/api",          "auth": "bearer",    "keys": ["OPENROUTER_KEY_1", "OPENROUTER_KEY_2", "OPENROUTER_KEY_3"] },
+    "opencode":   { "baseURL": "https://opencode.ai/zen",            "auth": "both",      "keys": ["OPENCODE_KEY_1"] }
+  },
+  "models": {
+    "ds-pro":   { "provider": "deepseek",   "model": "deepseek-v4-pro",   "maxOutputTokens": 32000, "fallback": ["glm"] },
+    "ds-flash": { "provider": "deepseek",   "model": "deepseek-v4-flash", "maxOutputTokens": 32000 },
+    "glm":      { "provider": "zai",        "model": "glm-5.1",           "maxOutputTokens": 32000, "fallback": ["ds-pro"] },
+    "glm-fast": { "provider": "zai",        "model": "glm-4.5-air",       "maxOutputTokens": 16000 },
+    "or-a":     { "provider": "openrouter", "model": "anthropic/claude-sonnet-4.5", "key": "OPENROUTER_KEY_1" },
+    "or-b":     { "provider": "openrouter", "model": "moonshotai/kimi-k2",          "key": "OPENROUTER_KEY_2" },
+    "or-c":     { "provider": "openrouter", "model": "qwen/qwen3-coder",            "key": "OPENROUTER_KEY_3" },
+    "oc-free":  { "provider": "opencode",   "model": "big-pickle" }
+  }
+}

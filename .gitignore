@@ -1,14 +1,14 @@
-# Dependencies
 node_modules/
-
-# Environment variables (contains API keys — never commit)
 .env
-
-# Build output
 dist/
-
-# Logs
+logs/
 *.log
-
-# OS files
 .DS_Store
+
+# ─────────────────────────────────────────────────────
+# Claude AI Memory System
+# Shared with team: everything in .claude/ except below
+# ─────────────────────────────────────────────────────
+.claude/settings.local.json
+.claude/tasks/eod/
+

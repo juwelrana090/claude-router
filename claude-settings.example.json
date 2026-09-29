@@ -1,0 +1,22 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:21450",
+    "ANTHROPIC_AUTH_TOKEN": "<same value as ROUTER_KEY in the router .env>",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "ds-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "ds-flash",
+    "ANTHROPIC_SMALL_FAST_MODEL": "ds-flash",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "npm run -s check 1>&2 || exit 2" }
+        ]
+      }
+    ]
+  }
+}
