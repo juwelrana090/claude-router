@@ -112,6 +112,17 @@ t("401 without router key", (await fetch(R + "/admin/snapshot")).status === 401)
 t("401 with wrong router key", (await fetch(R + "/admin/snapshot", { headers: { "x-api-key": "nope" } })).status === 401);
 t("401 on POST /admin/providers without key", (await fetch(R + "/admin/providers", { method: "POST" })).status === 401);
 t("401 on DELETE without key", (await fetch(R + "/admin/models/a", { method: "DELETE" })).status === 401);
+t("401 on /admin/events with a wrong ?key=", (await fetch(R + "/admin/events?key=nope")).status === 401);
+{
+  // EventSource cannot set headers, so the SSE stream must accept ?key=.
+  const ac = new AbortController();
+  const es = await fetch(R + `/admin/events?key=${encodeURIComponent(ROUTER_KEY)}`, { headers: { accept: "text/event-stream" }, signal: ac.signal });
+  t("?key= authenticates the SSE stream", es.status === 200, es.status);
+  await es.body.getReader().read();
+  ac.abort();
+}
+t("?key= does not authenticate any other admin path",
+  (await fetch(R + `/admin/snapshot?key=${encodeURIComponent(ROUTER_KEY)}`)).status === 401);
 
 {
   const r = await raw("GET", "/admin/snapshot", { "x-api-key": ROUTER_KEY, host: "evil.example.com" });
@@ -300,6 +311,12 @@ eq("no upstream call from any GET or from opening SSE", upstreamHits.length, 0);
   t("pinning to its own provider's key works", (await r.json()).model.key === "P2_K1");
   r = await call("PUT", "/admin/models/c", { key: null, version: await version() });
   t("key: null returns the model to the pool", (await r.json()).model.key === undefined);
+
+  r = await call("PUT", "/admin/models/c", { maxOutputTokens: null, price: null, version: await version() });
+  const cleared = await r.json();
+  t("null clears maxOutputTokens and price",
+    cleared.model.maxOutputTokens === undefined && cleared.model.price == null, cleared);
+  eq("cleared fields are off disk", [routes().models.c.maxOutputTokens, routes().models.c.price], [undefined, undefined]);
 }
 
 // ───────────────────────── 7. referential integrity + cascade ─────────────────────────

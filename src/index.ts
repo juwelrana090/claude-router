@@ -47,7 +47,14 @@ function safeEq(a: string, b: string): boolean {
 function authed(req: IncomingMessage): boolean {
   const bearer = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
   const xk = String(req.headers["x-api-key"] ?? "");
-  return safeEq(bearer, ROUTER_KEY) || safeEq(xk, ROUTER_KEY);
+  if (safeEq(bearer, ROUTER_KEY) || safeEq(xk, ROUTER_KEY)) return true;
+  // EventSource cannot send headers, so the live stream (and only it) may pass ?key=.
+  if (req.method === "GET") {
+    const u = new URL(req.url ?? "/", "http://localhost");
+    if (u.pathname === "/admin/events")
+      return safeEq(u.searchParams.get("key") ?? "", ROUTER_KEY);
+  }
+  return false;
 }
 
 function mergeUsage(u: UsageTotals, x: any): void {

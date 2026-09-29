@@ -88,7 +88,10 @@ function ModelFormModal({
           }
         : {},
     );
-  }, [open, model, form]);
+    // Initialise only when the modal opens or a different model is edited. Depending on the
+    // `model` object itself re-ran this on every 20s snapshot poll and wiped unsaved edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, model?.alias, form]);
 
   const providerOptions = (snapshot?.providers ?? []).map((p) => ({ value: p.name, label: p.name }));
   const selectedProvider: AdminProviderView | undefined = snapshot?.providers.find(
@@ -112,9 +115,9 @@ function ModelFormModal({
       provider: values.provider,
       model: values.model.trim(),
       key: values.key || null,
-      ...(values.maxOutputTokens != null ? { maxOutputTokens: values.maxOutputTokens } : {}),
+      maxOutputTokens: values.maxOutputTokens ?? null,
       fallback: values.fallback ?? [],
-      ...(price ? { price } : {}),
+      price: price ?? null,
     };
     if (isEdit && model) {
       await act(`Model "${model.alias}"`, () =>
@@ -191,7 +194,7 @@ function ModelFormModal({
         <Form.Item
           name="maxOutputTokens"
           label="Max output tokens"
-          tooltip="Optional cap. Note: the router keeps the previous value when this is cleared."
+          tooltip="Optional cap on output tokens per request. Leave empty for no cap."
         >
           <InputNumber min={1} step={256} style={{ width: '100%' }} placeholder="e.g. 8192" />
         </Form.Item>
@@ -212,7 +215,7 @@ function ModelFormModal({
           </Space.Compact>
         </Form.Item>
         <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-          Clearing price or max output tokens keeps the previous value on the server; set 0 or a new number to change it.
+          Leave price or max output tokens empty to remove them. Fallbacks are tried in the order listed, one level deep.
         </Typography.Paragraph>
       </Form>
     </Modal>

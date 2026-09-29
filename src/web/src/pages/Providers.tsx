@@ -462,7 +462,10 @@ function ProviderFormModal({
           }
         : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false },
     );
-  }, [open, provider, form]);
+    // Only on open / different provider: the 20s snapshot poll swaps the `provider` object and
+    // would otherwise reset the form under the user's hands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, provider?.name, form]);
 
   const submit = async () => {
     if (!version) return;

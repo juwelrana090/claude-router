@@ -389,7 +389,9 @@ export function validateModelBody(
   }
 
   let maxOutputTokens = existing?.maxOutputTokens;
-  if (body.maxOutputTokens !== undefined && body.maxOutputTokens !== "") {
+  if (body.maxOutputTokens === null) {
+    maxOutputTokens = undefined; // explicit clear
+  } else if (body.maxOutputTokens !== undefined && body.maxOutputTokens !== "") {
     const n = typeof body.maxOutputTokens === "string" ? Number(body.maxOutputTokens) : body.maxOutputTokens;
     if (typeof n !== "number" || !Number.isInteger(n) || n <= 0) {
       errors.push({ field: "maxOutputTokens", message: "must be a positive integer" });
@@ -415,8 +417,12 @@ export function validateModelBody(
 
   let price = existing?.price;
   try {
-    const p = validatePrice(body.price);
-    if (p !== undefined) price = p;
+    if (body.price === null) {
+      price = undefined; // explicit clear
+    } else {
+      const p = validatePrice(body.price);
+      if (p !== undefined) price = p;
+    }
   } catch (e) {
     errors.push(...(e as ValidationError).errors);
   }

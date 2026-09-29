@@ -18,23 +18,28 @@ export const ROUTER_KEY_STORAGE_KEY = 'claude-router-key';
 
 // ---------- Key gate ----------
 
+// Fallback for when sessionStorage is unavailable, so the key is still asked for only once.
+let memoryKey: string | null = null;
+
 export function getRouterKey(): string | null {
   try {
-    return sessionStorage.getItem(ROUTER_KEY_STORAGE_KEY);
+    return sessionStorage.getItem(ROUTER_KEY_STORAGE_KEY) ?? memoryKey;
   } catch {
-    return null;
+    return memoryKey;
   }
 }
 
 export function setRouterKey(key: string): void {
+  memoryKey = key;
   try {
     sessionStorage.setItem(ROUTER_KEY_STORAGE_KEY, key);
   } catch {
-    // sessionStorage unavailable (e.g. hardened privacy mode); key stays per-call.
+    // sessionStorage unavailable (e.g. hardened privacy mode); memoryKey covers this tab.
   }
 }
 
 export function clearRouterKey(): void {
+  memoryKey = null;
   try {
     sessionStorage.removeItem(ROUTER_KEY_STORAGE_KEY);
   } catch {
@@ -57,14 +62,29 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
 }
 
 let pendingAsk: Promise<string | null> | null = null;
+let declinedUntil = 0;
+const DECLINE_COOLDOWN_MS = 60_000;
 
-async function askForKey(): Promise<string | null> {
+/**
+ * `usedKey` is the key the failing request was sent with. Requests that were already in
+ * flight when the user typed the key come back 401 afterwards; they must reuse the new key
+ * instead of asking again (and must never wipe it). After a cancel, stay quiet for a minute
+ * so the background pollers don't reopen the dialog every few seconds.
+ */
+async function askForKey(usedKey: string | null): Promise<string | null> {
+  const current = getRouterKey();
+  if (current && current !== usedKey) return current;
   if (pendingAsk) return pendingAsk;
-  clearRouterKey();
+  if (Date.now() < declinedUntil) return null;
   pendingAsk = (async () => {
     try {
       const next = await unauthorizedHandler();
-      if (next) setRouterKey(next);
+      if (next) {
+        setRouterKey(next);
+        declinedUntil = 0;
+      } else {
+        declinedUntil = Date.now() + DECLINE_COOLDOWN_MS;
+      }
       return next;
     } finally {
       pendingAsk = null;
@@ -87,8 +107,8 @@ export class ApiError extends Error {
 
 /**
  * Fetch JSON from the admin API with the x-api-key header attached.
- * On 401 the stored key is dropped, the unauthorized handler runs once and the
- * request is retried with the fresh key.
+ * On 401 a key that was stored while the request was in flight is retried first;
+ * otherwise the unauthorized handler runs once and the request retries with it.
  */
 export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   const headers = new Headers(init.headers);
@@ -99,7 +119,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
   const res = await fetch(path, { ...init, headers });
 
   if (res.status === 401) {
-    if (retry && (await askForKey())) return api<T>(path, init, false);
+    if (retry && (await askForKey(key))) return api<T>(path, init, false);
     throw new ApiError(401, `Unauthorized: ${init.method ?? 'GET'} ${path}`);
   }
   if (!res.ok) {
@@ -142,8 +162,8 @@ export type EtaEventHandler = (event: EtaEvent) => void;
 /**
  * Subscribe to the "eta" SSE stream with auto-reconnect (exponential backoff,
  * capped at 15s). A fatal connection failure (which is also what a 401 on the
- * header-less EventSource looks like) re-prompts for the key once per failure
- * streak, then reconnects with `?key=` when a key is available.
+ * header-less EventSource looks like) never opens the key prompt itself: the polled
+ * api() calls do that. It waits for a key, then reconnects with `?key=`.
  *
  * Returns an unsubscribe function.
  */
@@ -151,18 +171,19 @@ export function subscribeEta(handler: EtaEventHandler): () => void {
   let source: EventSource | null = null;
   let reconnectTimer: number | undefined;
   let attempt = 0;
-  let promptedThisStreak = false;
   let stopped = false;
 
   const connect = () => {
     if (stopped) return;
     const key = getRouterKey();
-    const url = key ? `/admin/events?key=${encodeURIComponent(key)}` : '/admin/events';
-    source = new EventSource(url);
+    if (!key) {
+      reconnectTimer = window.setTimeout(connect, 2000);
+      return;
+    }
+    source = new EventSource(`/admin/events?key=${encodeURIComponent(key)}`);
 
     source.addEventListener('eta', (ev: Event) => {
       attempt = 0;
-      promptedThisStreak = false;
       try {
         handler(JSON.parse((ev as MessageEvent).data) as EtaEvent);
       } catch {
@@ -172,21 +193,14 @@ export function subscribeEta(handler: EtaEventHandler): () => void {
 
     source.onerror = () => {
       if (stopped) return;
-      // CLOSED = EventSource gave up (fatal, e.g. 401). CONNECTING = it is still
-      // retrying on its own; we close it and take over with backoff either way.
-      const fatal = source?.readyState === EventSource.CLOSED;
+      // Whether EventSource gave up or is retrying on its own, close it and reconnect with
+      // backoff. Auth problems are handled by the api() pollers, not here.
       source?.close();
       attempt += 1;
-      const delay = Math.min(1000 * 2 ** attempt, 15000);
-      if (fatal && !promptedThisStreak) {
-        promptedThisStreak = true;
-        void (async () => {
-          await askForKey();
-          if (!stopped) reconnectTimer = window.setTimeout(connect, delay);
-        })();
-        return;
-      }
-      reconnectTimer = window.setTimeout(connect, delay);
+      reconnectTimer = window.setTimeout(
+        connect,
+        Math.min(1000 * 2 ** attempt, 15000),
+      );
     };
   };
 

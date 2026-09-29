@@ -1302,6 +1302,291 @@ on spacing or contrast is quick once I can see the result.
 
 ---
 
+## PART 12 — Model edits not saving, "Router key required" reappearing, fallbacks
+
+Root causes, all reproduced against a copy of your current zip (server run locally, edit
+payloads replayed, the key-prompt logic unit-tested with mocked fetch/sessionStorage):
+
+1. **Max out / fallback edits are wiped while you edit.** `useAdminSnapshot()` re-fetches every
+   20s and hands the edit modal a _new_ `model` object each time. The modal's form-init effect
+   depends on that object (`[open, model, form]`), so every 20s (and on every refresh click) it
+   runs `form.resetFields()` and puts the saved values back over whatever you typed. Save then
+   submits the reset values, so it looks like the edit "does nothing". `ProviderFormModal` has
+   the identical bug. The server side was fine: replaying the exact form payload changed
+   `maxOutputTokens` and saved `fallback`.
+2. **You could never clear Max out or Price.** The server ignored a missing value (kept the old
+   one) and rejected `null`. The form text said so ("keeps the previous value"). Now `null`
+   clears.
+3. **"Router key required" keeps coming back**, three causes stacked:
+   - `/admin/events` (the live stream) **always returns 401**, even with a valid key: the UI
+     sends `?key=` because `EventSource` cannot set headers, but the server's `authed()` only
+     reads headers. Every stream failure was treated as "bad key".
+   - On that failure the stream code called `askForKey()`, which **deleted your stored key**
+     before prompting, so the next API call had no key either.
+   - Requests already in flight when you typed the key come back 401 afterwards and prompted
+     again (and wiped the key again). A Cancel also re-prompted every few seconds because the
+     pollers keep firing.
+4. **Fallbacks:** the form lets you pick any other alias. The only thing that blocks a choice is
+   the cycle check (A falls back to B and B falls back to A is refused, otherwise the proxy could
+   loop). With Part 7 in place that error now reads
+   `fallback: cycle detected: glm-fast -> ds-pro -> glm-fast`. The chain is one level deep
+   (`[alias, ...its own fallback]`), so mutual fallbacks are never needed: list every
+   alternative directly on the model that needs it.
+
+Verification I ran on these exact changes: server `tsc` clean, web `tsc --noEmit` clean, Vite
+build OK, `scripts/admin-smoke.mjs` ALL PASSED, plus: `/admin/events?key=<right key>` streams,
+no key or wrong key is 401, `?key=` does **not** authenticate any other admin path; clearing and
+setting max tokens/price and saving fallbacks works; a fallback cycle returns 400 with the
+readable message; the key-prompt test (5 parallel calls incl. one slow, SSE without a key,
+Cancel) passes 7/7 and the same test fails 5 of 7 on the current `api.ts`.
+
+### 12.1 — `src/index.ts`: let only the live stream authenticate with `?key=`
+
+Replace the whole `authed` function with:
+
+```ts
+function authed(req: IncomingMessage): boolean {
+  const bearer = String(req.headers.authorization ?? "").replace(
+    /^Bearer\s+/i,
+    "",
+  );
+  const xk = String(req.headers["x-api-key"] ?? "");
+  if (safeEq(bearer, ROUTER_KEY) || safeEq(xk, ROUTER_KEY)) return true;
+  // EventSource cannot send headers, so the live stream (and only it) may pass ?key=.
+  if (req.method === "GET") {
+    const u = new URL(req.url ?? "/", "http://localhost");
+    if (u.pathname === "/admin/events")
+      return safeEq(u.searchParams.get("key") ?? "", ROUTER_KEY);
+  }
+  return false;
+}
+```
+
+(The key ends up in the URL of that one local request only; every other endpoint still
+requires the header.)
+
+### 12.2 — `src/config.ts`: allow clearing max output tokens and price
+
+In `validateModelBody`, replace
+
+```ts
+  if (body.maxOutputTokens !== undefined && body.maxOutputTokens !== "") {
+```
+
+with
+
+```ts
+  if (body.maxOutputTokens === null) {
+    maxOutputTokens = undefined; // explicit clear
+  } else if (body.maxOutputTokens !== undefined && body.maxOutputTokens !== "") {
+```
+
+(the rest of that `if` body is unchanged), and replace
+
+```ts
+  try {
+    const p = validatePrice(body.price);
+    if (p !== undefined) price = p;
+  } catch (e) {
+```
+
+with
+
+```ts
+  try {
+    if (body.price === null) {
+      price = undefined; // explicit clear
+    } else {
+      const p = validatePrice(body.price);
+      if (p !== undefined) price = p;
+    }
+  } catch (e) {
+```
+
+### 12.3 — `src/web/src/pages/Models.tsx`
+
+1. Replace `  }, [open, model, form]);` (end of the form-init `useEffect`) with:
+
+```tsx
+    // Initialise only when the modal opens or a different model is edited. Depending on the
+    // `model` object itself re-ran this on every 20s snapshot poll and wiped unsaved edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, model?.alias, form]);
+```
+
+2. In `submit`, replace
+
+```tsx
+      ...(values.maxOutputTokens != null ? { maxOutputTokens: values.maxOutputTokens } : {}),
+      fallback: values.fallback ?? [],
+      ...(price ? { price } : {}),
+```
+
+with
+
+```tsx
+      maxOutputTokens: values.maxOutputTokens ?? null,
+      fallback: values.fallback ?? [],
+      price: price ?? null,
+```
+
+3. Replace the `maxOutputTokens` tooltip string
+   `"Optional cap. Note: the router keeps the previous value when this is cleared."` with
+   `"Optional cap on output tokens per request. Leave empty for no cap."`, and replace the
+   paragraph text `Clearing price or max output tokens keeps the previous value on the server; set 0 or a new number to change it.`
+   with `Leave price or max output tokens empty to remove them. Fallbacks are tried in the order listed, one level deep.`
+
+### 12.4 — `src/web/src/pages/Providers.tsx` (`ProviderFormModal`)
+
+Replace `  }, [open, provider, form]);` (end of its form-init `useEffect`) with:
+
+```tsx
+    // Only on open / different provider: the 20s snapshot poll swaps the `provider` object and
+    // would otherwise reset the form under the user's hands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, provider?.name, form]);
+```
+
+### 12.5 — `src/web/src/api.ts`: ask for the key once, never wipe it, SSE never prompts
+
+Replace the three functions `getRouterKey`, `setRouterKey` and `clearRouterKey` (from
+`export function getRouterKey` through the end of `clearRouterKey`) with:
+
+```ts
+// Fallback for when sessionStorage is unavailable, so the key is still asked for only once.
+let memoryKey: string | null = null;
+
+export function getRouterKey(): string | null {
+  try {
+    return sessionStorage.getItem(ROUTER_KEY_STORAGE_KEY) ?? memoryKey;
+  } catch {
+    return memoryKey;
+  }
+}
+
+export function setRouterKey(key: string): void {
+  memoryKey = key;
+  try {
+    sessionStorage.setItem(ROUTER_KEY_STORAGE_KEY, key);
+  } catch {
+    // sessionStorage unavailable (e.g. hardened privacy mode); memoryKey covers this tab.
+  }
+}
+
+export function clearRouterKey(): void {
+  memoryKey = null;
+  try {
+    sessionStorage.removeItem(ROUTER_KEY_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+```
+
+Replace the whole `pendingAsk` / `askForKey` block with:
+
+```ts
+let pendingAsk: Promise<string | null> | null = null;
+let declinedUntil = 0;
+const DECLINE_COOLDOWN_MS = 60_000;
+
+/**
+ * `usedKey` is the key the failing request was sent with. Requests that were already in
+ * flight when the user typed the key come back 401 afterwards; they must reuse the new key
+ * instead of asking again (and must never wipe it). After a cancel, stay quiet for a minute
+ * so the background pollers don't reopen the dialog every few seconds.
+ */
+async function askForKey(usedKey: string | null): Promise<string | null> {
+  const current = getRouterKey();
+  if (current && current !== usedKey) return current;
+  if (pendingAsk) return pendingAsk;
+  if (Date.now() < declinedUntil) return null;
+  pendingAsk = (async () => {
+    try {
+      const next = await unauthorizedHandler();
+      if (next) {
+        setRouterKey(next);
+        declinedUntil = 0;
+      } else {
+        declinedUntil = Date.now() + DECLINE_COOLDOWN_MS;
+      }
+      return next;
+    } finally {
+      pendingAsk = null;
+    }
+  })();
+  return pendingAsk;
+}
+```
+
+In `api()`, change `if (retry && (await askForKey())) return api<T>(path, init, false);` to
+`if (retry && (await askForKey(key))) return api<T>(path, init, false);` (`key` is the const
+already defined a few lines above it).
+
+Replace the whole `subscribeEta` function, **including the `/** ... \*/`comment directly above
+it** (through its closing`}` at the end of the file), with:
+
+```ts
+/**
+ * Subscribe to the "eta" SSE stream with auto-reconnect (exponential backoff,
+ * capped at 15s). A fatal connection failure (which is also what a 401 on the
+ * header-less EventSource looks like) never opens the key prompt itself: the polled
+ * api() calls do that. It waits for a key, then reconnects with `?key=`.
+ *
+ * Returns an unsubscribe function.
+ */
+export function subscribeEta(handler: EtaEventHandler): () => void {
+  let source: EventSource | null = null;
+  let reconnectTimer: number | undefined;
+  let attempt = 0;
+  let stopped = false;
+
+  const connect = () => {
+    if (stopped) return;
+    const key = getRouterKey();
+    if (!key) {
+      reconnectTimer = window.setTimeout(connect, 2000);
+      return;
+    }
+    source = new EventSource(`/admin/events?key=${encodeURIComponent(key)}`);
+
+    source.addEventListener("eta", (ev: Event) => {
+      attempt = 0;
+      try {
+        handler(JSON.parse((ev as MessageEvent).data) as EtaEvent);
+      } catch {
+        // Malformed event payload; skip it.
+      }
+    });
+
+    source.onerror = () => {
+      if (stopped) return;
+      // Whether EventSource gave up or is retrying on its own, close it and reconnect with
+      // backoff. Auth problems are handled by the api() pollers, not here.
+      source?.close();
+      attempt += 1;
+      reconnectTimer = window.setTimeout(
+        connect,
+        Math.min(1000 * 2 ** attempt, 15000),
+      );
+    };
+  };
+
+  connect();
+
+  return () => {
+    stopped = true;
+    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+    source?.close();
+  };
+}
+```
+
+After applying: `npm run build`, restart the router, then hard-refresh the browser tab once.
+You enter the key once; it survives the 20s polls, router restarts and the live stream.
+
+---
+
 ## What's already built (so nothing above gets rebuilt from scratch)
 
 - **Auto provider-switching when you change models in Claude Code / VS Code** is already the
