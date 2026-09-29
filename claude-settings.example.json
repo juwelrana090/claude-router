@@ -1,7 +1,7 @@
 {
   "statusLine": {
     "type": "command",
-    "command": "node \"/absolute/path/to/claude-router/scripts/statusline.mjs\""
+    "command": "\"/absolute/path/to/claude-router/scripts/statusline\""
   },
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:21450",

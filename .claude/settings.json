@@ -159,7 +159,16 @@
       "Bash(curl -s -m 3 -o /dev/null -w \"events_query_key=%{http_code}\\\\n\" \"http://127.0.0.1:21450/admin/events?key=dummy\")",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
       "Bash(lsof -ti:22077)",
-      "Bash(node /tmp/eta-audit-e2e.mjs)"
+      "Bash(node /tmp/eta-audit-e2e.mjs)",
+      "Bash(pgrep -fl \"dist/index.js\" | head -3; rm -rf /tmp/eta-audit-e2e.mjs /tmp/eta-audit-* 2>/dev/null; echo cleaned)",
+      "Bash(chmod +x \"/Users/dalawerhossainjuwel/Dev/Claude Code/claude-router/scripts/statusline\")",
+      "Bash(ROUTER_HOME=/tmp/nonexistent-router-home timeout 10 node scripts/statusline)",
+      "Bash(ROUTER_HOME=/tmp/nonexistent-router-home node scripts/statusline)",
+      "Bash(ROUTER_HOME=/tmp/nonexistent-router-home node scripts/statusline.mjs)",
+      "Bash(ROUTER_HOME=/tmp/nonexistent-router-home ./scripts/statusline)",
+      "Bash(git -C . diff --stat)",
+      "Bash(ls src/ui)",
+      "Bash(ls scripts/copy-ui.mjs)"
     ],
     "deny": [
       "Write(~/**)",

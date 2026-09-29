@@ -59,13 +59,22 @@ function mergeUsage(u: UsageTotals, x: any): void {
   u.cacheWrite = Math.max(u.cacheWrite, n(x.cache_creation_input_tokens));
 }
 
-function sniffSSE(event: string, u: UsageTotals): void {
+// Live output estimate. Standard Anthropic streams carry usage only in
+// message_start / the trailing message_delta, so outSoFar would stay pinned and
+// the live tokens/sec would never engage. Content deltas are counted and
+// converted at ~4 chars/token until real usage arrives; mergeUsage keeps the
+// max, so the authoritative final usage always wins for the log.
+function sniffSSE(event: string, u: UsageTotals, est: { chars: number }): void {
   for (const line of event.split("\n")) {
     if (!line.startsWith("data:")) continue;
     try {
       const d = JSON.parse(line.slice(5).trim());
       if (d.type === "message_start") mergeUsage(u, d.message?.usage);
       else if (d.type === "message_delta") mergeUsage(u, d.usage);
+      else if (d.type === "content_block_delta") {
+        const t = d.delta?.text ?? d.delta?.thinking ?? d.delta?.partial_json ?? "";
+        if (typeof t === "string") est.chars += t.length;
+      }
     } catch {
       /* ignore partial / non-JSON */
     }
@@ -111,6 +120,7 @@ function record(
       // full-duration shapes and an aborted stream is not a completed request.
       ttftMs: timing?.streamed && !timing?.aborted ? timing?.ttftMs ?? null : null,
       outputTokensPerSec: timing?.streamed && !timing?.aborted ? timing?.outputTokensPerSec ?? null : null,
+      aborted: timing?.aborted,
     });
     eta.sessionBump({
       sessionId: timing?.sessionId ?? null, provider: m.provider, model: m.model,
@@ -143,6 +153,7 @@ async function relay(
       live.markStreaming(track?.id ?? "");
       const dec = new TextDecoder();
       let buf = "";
+      const est = { chars: 0 };
       try {
         for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
           if (!firstTokenAt) {
@@ -158,8 +169,8 @@ async function relay(
           buf += dec.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
           let i: number;
           while ((i = buf.indexOf("\n\n")) !== -1) {
-            sniffSSE(buf.slice(0, i), u);
-            eta.noteOutput(track?.id ?? "", u.out);
+            sniffSSE(buf.slice(0, i), u, est);
+            eta.noteOutput(track?.id ?? "", Math.max(u.out, Math.round(est.chars / 4)));
             buf = buf.slice(i + 2);
           }
         }
@@ -456,14 +467,21 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.requestTimeout = 0; // long streaming responses must not be cut
-try { eta.seedHistory(); } catch { /* unreadable log -> empty history, "estimating..." */ }
-server.listen(PORT, "127.0.0.1", () => {
-  const c = getCfg();
-  console.log(`\nClaude Router v2  ->  http://127.0.0.1:${PORT}\n${"-".repeat(40)}`);
-  for (const [name, m] of Object.entries(c.models)) {
-    const p = c.providers[m.provider];
-    const ok = !p ? "NO PROVIDER" : p.disabled ? "DISABLED" : keyOrder(p, m, "x").length ? "ok" : "NO KEY";
-    console.log(`  ${name.padEnd(10)} ${m.provider}/${m.model}  [${ok}]`);
-  }
-  console.log(`\n  UI (needs ROUTER_KEY):  http://127.0.0.1:${PORT}/ui\n`);
-});
+// The rings are seeded before the port opens: a request in the first moments
+// after restart must not get etaMs=null ("estimating...") against a populated
+// usage log. An unreadable log degrades to empty history, not a crash.
+eta.seedHistory()
+  .catch((e) => console.warn("[ETA] usage log unreadable -> seeding with empty history:",
+    e instanceof Error ? e.message : String(e)))
+  .then(() => {
+    server.listen(PORT, "127.0.0.1", () => {
+      const c = getCfg();
+      console.log(`\nClaude Router v2  ->  http://127.0.0.1:${PORT}\n${"-".repeat(40)}`);
+      for (const [name, m] of Object.entries(c.models)) {
+        const p = c.providers[m.provider];
+        const ok = !p ? "NO PROVIDER" : p.disabled ? "DISABLED" : keyOrder(p, m, "x").length ? "ok" : "NO KEY";
+        console.log(`  ${name.padEnd(10)} ${m.provider}/${m.model}  [${ok}]`);
+      }
+      console.log(`\n  UI (needs ROUTER_KEY):  http://127.0.0.1:${PORT}/ui\n`);
+    });
+  });

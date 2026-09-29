@@ -1,0 +1,4 @@
+#!/bin/sh
+# Spec-name entry point for scripts/statusline.mjs: an extensionless file is not
+# picked up as ESM under "type": "commonjs", so the implementation stays .mjs.
+exec node "$(dirname "$0")/statusline.mjs" "$@"
