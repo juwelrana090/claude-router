@@ -1,0 +1,1194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>claude-router</title>
+<style>
+:root{
+  --bg:#0f1115;--panel:#161a21;--panel2:#1c212a;--line:#262c37;--fg:#e6e9ef;--dim:#8b94a6;
+  --acc:#5b9dff;--ok:#3fb950;--warn:#d29922;--err:#f85149;--chip:#222836;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:light){
+  :root{--bg:#f6f7f9;--panel:#fff;--panel2:#f0f2f5;--line:#e2e5ea;--fg:#1b1f27;--dim:#666e7d;
+        --acc:#0b62d6;--ok:#1a7f37;--warn:#9a6700;--err:#cf222e;--chip:#eceef2}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+h1,h2,h3{margin:0;font-weight:650}
+h2{font-size:15px} h3{font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+a{color:var(--acc)}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 11px}
+button:hover:not(:disabled){border-color:var(--acc)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{color:var(--err)}
+button.sm{padding:2px 7px;font-size:12px;border-radius:5px}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:6px 9px;width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--acc);outline-offset:-1px}
+label{display:block;font-size:12px;color:var(--dim);margin:0 0 3px}
+fieldset{border:1px solid var(--line);border-radius:9px;padding:11px;margin:0 0 11px}
+legend{padding:0 6px;font-size:12px;color:var(--dim)}
+code,.mono{font-family:var(--mono);font-size:12px}
+
+/* gate */
+#gate{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50}
+#gate .box{width:min(380px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+#gate .err{color:var(--err);font-size:13px;min-height:18px;margin-top:8px}
+
+/* shell */
+header{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);
+  display:flex;gap:12px;align-items:center;padding:9px 16px;flex-wrap:wrap}
+header .grow{flex:1}
+.brand{font-weight:700;letter-spacing:-.01em}
+.tabs{display:flex;gap:2px}
+.tabs button{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;padding:6px 12px;color:var(--dim)}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--acc)}
+.conn{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.dot.on{background:var(--ok)} .dot.poll{background:var(--warn)} .dot.off{background:var(--err)}
+main{padding:16px;max-width:1400px;margin:0 auto}
+[hidden]{display:none!important}
+.grid{display:grid;gap:11px}
+.cards{grid-template-columns:repeat(auto-fill,minmax(215px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.card.dis{opacity:.55}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:600;color:var(--dim);font-size:11px;text-transform:uppercase;
+   letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:hover{background:var(--panel2)}
+.scroll{overflow:auto;max-height:min(58vh,620px)}
+.badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;background:var(--chip);color:var(--dim);white-space:nowrap}
+.badge.ok{color:var(--ok)} .badge.warn{color:var(--warn)} .badge.err{color:var(--err)}
+.muted{color:var(--dim)} .small{font-size:12px} .num{text-align:right;font-family:var(--mono);font-size:12px}
+.empty{padding:26px;text-align:center;color:var(--dim)}
+.banner{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:13px}
+.banner.idle .pill{background:var(--chip)}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:3px 10px;border-radius:999px;
+      background:color-mix(in srgb,var(--acc) 18%,transparent);border:1px solid var(--acc);font-family:var(--mono);font-size:12px}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:p 1.1s ease-in-out infinite;flex:none}
+@keyframes p{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
+.pulse.connecting{background:var(--warn)}
+.toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:7px;z-index:60;max-width:min(420px,92vw)}
+.toast{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+       border-radius:8px;padding:9px 12px;font-size:13px;box-shadow:0 6px 20px #0006}
+.toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;
+       padding:0;max-width:min(560px,94vw);width:100%}
+dialog::backdrop{background:#000a}
+.dlg-h{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.dlg-b{padding:15px 16px;max-height:70vh;overflow:auto}
+.dlg-f{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fgrid .full{grid-column:1/-1}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--chip);border-radius:6px;padding:2px 5px 2px 8px;font-size:12px}
+.chip button{background:none;border:none;padding:0 3px;color:var(--dim);line-height:1}
+.errs{margin-top:9px}
+.errs div{color:var(--err);font-size:12px;padding:2px 0}
+.warnbox{border:1px solid var(--warn);border-radius:7px;padding:7px 10px;color:var(--warn);font-size:12px;margin-bottom:10px}
+.dirty{position:fixed;bottom:0;left:0;right:0;background:var(--warn);color:#000;padding:6px;text-align:center;font-weight:600;z-index:40}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:11px;overflow:auto;margin:0;
+    font-family:var(--mono);font-size:12px}
+.bar{fill:var(--acc);fill-opacity:.85}
+.bar.warn{fill:var(--warn)}
+.chart-lab{fill:var(--dim);font-size:11px}
+.spin{width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;
+     display:inline-block;animation:s .7s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:8px;top:8px;z-index:99;background:var(--acc);color:#fff;padding:7px 12px;border-radius:6px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+@media(max-width:640px){.fgrid{grid-template-columns:1fr}header{padding:8px 11px}main{padding:11px}}
+@media (prefers-reduced-motion:reduce){.pulse,.spin{animation:none}}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <h2>claude-router</h2>
+    <p class="muted small">Enter your ROUTER_KEY. It is kept in this tab's sessionStorage only and sent as a header.</p>
+    <form id="gate-form">
+      <label for="gate-key">ROUTER_KEY</label>
+      <input id="gate-key" type="password" autocomplete="off" spellcheck="false" required>
+      <div class="err" id="gate-err" role="alert"></div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button class="primary" type="submit">Unlock</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<header>
+  <span class="brand">claude-router</span>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="live" aria-selected="true">Live</button>
+    <button role="tab" data-tab="providers" aria-selected="false">Providers</button>
+    <button role="tab" data-tab="models" aria-selected="false">Models</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+    <button role="tab" data-tab="usage" aria-selected="false">Usage</button>
+  </nav>
+  <span class="grow"></span>
+  <span class="conn"><span class="dot" id="conn-dot"></span><span id="conn-txt">connecting</span></span>
+  <button class="sm" id="lock" title="Forget the key">Lock</button>
+</header>
+
+<main>
+  <!-- ─────────── LIVE ─────────── -->
+  <section id="tab-live" role="tabpanel">
+    <div class="banner idle" id="now">
+      <div class="row">
+        <strong>Now running</strong>
+        <span class="grow"></span>
+        <span class="small muted" id="now-count"></span>
+      </div>
+      <div class="chips" id="now-chips" style="margin-top:9px"></div>
+    </div>
+
+    <div class="row" style="margin:0 0 11px">
+      <h2>Providers</h2><span class="grow"></span>
+      <span class="small muted" id="live-counters"></span>
+    </div>
+    <div class="grid cards" id="prov-cards"></div>
+
+    <div class="row" style="margin:17px 0 8px">
+      <h2>Recent requests</h2>
+      <span class="grow"></span>
+      <span class="small muted" id="recent-count"></span>
+    </div>
+    <div class="card scroll" style="padding:0">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Alias</th><th>Route</th><th>Key</th><th>Status</th>
+          <th class="num">ms</th><th class="num">in</th><th class="num">out</th>
+          <th class="num">cacheR</th><th class="num">cost</th><th>Note</th>
+        </tr></thead>
+        <tbody id="recent-body"></tbody>
+      </table>
+      <div class="empty" id="recent-empty">No requests yet.</div>
+    </div>
+  </section>
+
+  <!-- ─────────── PROVIDERS ─────────── -->
+  <section id="tab-providers" role="tabpanel" hidden>
+    <div class="row" style="margin-bottom:11px">
+      <h2>Providers</h2><span class="grow"></span>
+      <button class="primary" id="add-prov">Add provider</button>
+    </div>
+    <div class="card" style="padding:0"><table>
+      <thead><tr><th>Name</th><th>Base URL</th><th>Auth</th><th>Keys</th><th>State</th><th></th></tr></thead>
+      <tbody id="prov-body"></tbody>
+    </table></div>
+  </section>
+
+  <!-- ─────────── MODELS ─────────── -->
+  <section id="tab-models" role="tabpanel" hidden>
+    <div class="row" style="margin-bottom:11px">
+      <h2>Models</h2><span class="grow"></span>
+      <button class="primary" id="add-model">Add model</button>
+    </div>
+    <div class="card" style="padding:0"><table>
+      <thead><tr><th>Alias</th><th>Provider</th><th>Upstream model</th><th>Key</th>
+        <th class="num">max out</th><th>Fallback</th><th>Price in/out</th><th></th></tr></thead>
+      <tbody id="model-body"></tbody>
+    </table></div>
+  </section>
+
+  <!-- ─────────── SETTINGS ─────────── -->
+  <section id="tab-settings" role="tabpanel" hidden>
+    <h2 style="margin-bottom:11px">Settings</h2>
+    <form id="settings-form" class="card" style="max-width:640px">
+      <div class="fgrid">
+        <div><label for="s-default">Default model</label><select id="s-default"></select></div>
+        <div class="muted small" style="align-self:end;padding-bottom:8px">Used when a request names an unknown model.</div>
+        <div><label for="s-opus">opus &rarr;</label><select id="s-opus"></select></div>
+        <div><label for="s-sonnet">sonnet &rarr;</label><select id="s-sonnet"></select></div>
+        <div><label for="s-haiku">haiku &rarr;</label><select id="s-haiku"></select></div>
+        <div class="muted small" style="align-self:end;padding-bottom:8px">Claude Code asks for these names.</div>
+      </div>
+      <div id="s-errs" class="errs"></div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <span class="grow small muted" id="s-version"></span>
+        <button type="button" id="s-reset">Revert</button>
+        <button class="primary" type="submit">Save settings</button>
+      </div>
+    </form>
+
+    <h3 style="margin:20px 0 7px">Claude Code env snippet</h3>
+    <p class="small muted" style="margin:0 0 7px">Paste into <code>~/.claude/settings.json</code> &rarr; <code>env</code>.</p>
+    <pre id="env-snippet"></pre>
+    <div class="row" style="margin-top:8px">
+      <button id="copy-env">Copy</button>
+      <span class="small muted" id="copy-msg"></span>
+    </div>
+
+    <h3 style="margin:20px 0 7px">Files</h3>
+    <div class="card small" style="max-width:640px">
+      <div>routes.json <code id="f-routes"></code> &middot; version <code id="f-version"></code></div>
+      <div style="margin-top:5px">.env <code id="f-env"></code></div>
+      <div style="margin-top:5px">backups <code id="f-backups"></code> (last 5 of each)</div>
+    </div>
+  </section>
+
+  <!-- ─────────── USAGE ─────────── -->
+  <section id="tab-usage" role="tabpanel" hidden>
+    <div class="row" style="margin-bottom:11px">
+      <h2>Usage</h2><span class="grow"></span>
+      <div class="row" id="range-picker">
+        <button class="sm" data-range="1h">1h</button>
+        <button class="sm" data-range="24h">24h</button>
+        <button class="sm" data-range="7d">7d</button>
+      </div>
+      <button class="sm" id="usage-refresh">Refresh</button>
+    </div>
+    <div id="usage-body"><div class="empty"><span class="spin"></span></div></div>
+  </section>
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="dirty" id="dirty-bar" hidden>Unsaved changes in this dialog</div>
+
+<!-- generic modal -->
+<dialog id="modal">
+  <form method="dialog">
+    <div class="dlg-h"><h2 id="m-title">Title</h2><button class="sm" value="cancel" aria-label="Close">✕</button></div>
+    <div class="dlg-b" id="m-body"></div>
+    <div class="dlg-f" id="m-foot"></div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+// ─────────────────────────── helpers ───────────────────────────
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+const KEY_STORAGE = "claude-router-key";
+let ROUTER_KEY = "";
+let snap = null, tab = "live", streamAbort = null, pollTimer = null, backoff = 1000, range = "1h";
+let lastUsage = null, settingsDirty = false;
+let recentSig = "", nowSig = "";
+
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (n) => (n === null || n === undefined || n === "" ? "-" : Number(n).toLocaleString());
+const usd = (n) => (n ? "$" + (Math.abs(n) < 0.01 ? n.toFixed(5) : n.toFixed(4)) : "-");
+const pct = (n) => (n === null || n === undefined ? "-" : Math.round(n * 100) + "%");
+const ago = (ts) => {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  if (s < 86400) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+};
+const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour12: false });
+
+function el(tag, attrs, kids) {
+  const n = document.createElement(tag);
+  for (const k in attrs) {
+    if (k === "class") n.className = attrs[k];
+    else if (k === "html") n.innerHTML = attrs[k];
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), attrs[k]);
+    else if (attrs[k] !== null && attrs[k] !== undefined && attrs[k] !== false) n.setAttribute(k, attrs[k]);
+  }
+  for (const kid of [].concat(kids || [])) if (kid != null) n.append(kid);
+  return n;
+}
+// Every rendered value goes through text nodes; innerHTML only ever gets escaped markup.
+
+function toast(msg, kind) {
+  const t = el("div", { class: "toast " + (kind || ""), role: "status" }, [msg]);
+  $("#toasts").append(t);
+  setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; setTimeout(() => t.remove(), 320); }, kind === "err" ? 7000 : 3200);
+}
+
+// ─────────────────────────── api ───────────────────────────
+async function api(path, opts) {
+  const o = Object.assign({ headers: {} }, opts || {});
+  o.headers = Object.assign({ "content-type": "application/json" }, o.headers);
+  o.headers["x-api-key"] = ROUTER_KEY;
+  const r = await fetch(path, o);
+  if (r.status === 401) { lock("Router key rejected - unlock again."); throw new Error("unauthorized"); }
+  const text = await r.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: { message: text.slice(0, 200) } }; }
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || "HTTP " + r.status);
+    err.status = r.status; err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+// ─────────────────────────── gate ───────────────────────────
+function lock(msg) {
+  stopStream();
+  ROUTER_KEY = "";
+  sessionStorage.removeItem(KEY_STORAGE);
+  $("#gate").hidden = false;
+  $("#gate-err").textContent = msg || "";
+  $("#gate-key").value = "";
+  $("#gate-key").focus();
+}
+$("#gate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  ROUTER_KEY = $("#gate-key").value.trim();
+  $("#gate-err").textContent = "";
+  try {
+    snap = await api("/admin/snapshot");
+    sessionStorage.setItem(KEY_STORAGE, ROUTER_KEY);
+    $("#gate").hidden = true;
+    selectTab("live");
+    startStream();
+  } catch (err) {
+    if (err.message === "unauthorized") $("#gate-err").textContent = "Wrong ROUTER_KEY.";
+    else $("#gate-err").textContent = err.message;
+    ROUTER_KEY = "";
+  }
+});
+$("#lock").addEventListener("click", () => lock());
+
+// ─────────────────────────── live stream ───────────────────────────
+function setConn(cls, txt) { $("#conn-dot").className = "dot " + cls; $("#conn-txt").textContent = txt; }
+
+// EventSource cannot send an Authorization header, so we read the SSE stream with
+// fetch() instead. Same frames, plus headers, backoff and a polling fallback.
+function startStream() {
+  stopStream();
+  backoff = 1000;
+  streamAbort = new AbortController();
+  streamLoop(streamAbort.signal);
+}
+function stopStream() {
+  if (streamAbort) { try { streamAbort.abort(); } catch {} streamAbort = null; }
+  stopPolling();
+}
+async function streamLoop(signal) {
+  let failures = 0;
+  while (ROUTER_KEY && !signal.aborted) {
+    try {
+      setConn(failures ? "off" : "on", failures ? "reconnecting" : "connecting");
+      const r = await fetch("/admin/events", {
+        headers: { "x-api-key": ROUTER_KEY, accept: "text/event-stream" },
+        signal,
+      });
+      if (r.status === 401) { lock("Router key rejected - unlock again."); return; }
+      if (r.status === 429) { startPolling(); return; }
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+
+      failures = 0;
+      backoff = 1000;
+      stopPolling();
+      setConn("on", "live");
+
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) !== -1) {
+          handleFrame(buf.slice(0, i));
+          buf = buf.slice(i + 2);
+        }
+      }
+    } catch (e) {
+      if (signal.aborted || !ROUTER_KEY) return;
+    }
+    if (signal.aborted || !ROUTER_KEY) return;
+    failures++;
+    setConn("off", "reconnecting");
+    if (failures >= 3) startPolling();
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 2, 15000);
+  }
+}
+function handleFrame(frame) {
+  let event = "message", data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return;
+  let d;
+  try { d = JSON.parse(data); } catch { return; }
+  if (event === "snapshot") onSnapshot(d);
+  else if (event === "start") {
+    if (!snap) return;
+    snap.inFlight.push(d);
+    paintLive(true);
+  } else if (event === "update") {
+    if (!snap) return;
+    const f = snap.inFlight.find((x) => x.id === d.id);
+    if (f) Object.assign(f, d);
+    paintLive(true);
+  } else if (event === "finish") {
+    if (!snap) return;
+    snap.inFlight = snap.inFlight.filter((x) => x.id !== d.id);
+    snap.recent.push(d);
+    if (snap.recent.length > 200) snap.recent.shift();
+    paintLive(true);
+  }
+}
+function startPolling() {
+  if (pollTimer) return;
+  setConn("poll", "polling");
+  pollTimer = setInterval(async () => {
+    try { onSnapshot(await api("/admin/snapshot")); } catch { setConn("off", "offline"); }
+  }, 2000);
+}
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+function onSnapshot(s) {
+  snap = s;
+  if (tab === "live") paintLive();
+  if (tab === "providers") paintProviders();
+  if (tab === "models") paintModels();
+  if (tab === "settings") paintSettings();
+}
+
+// ─────────────────────────── tab switching ───────────────────────────
+$("#tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (b) selectTab(b.dataset.tab);
+});
+function selectTab(name) {
+  tab = name;
+  $$("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  ["live", "providers", "models", "settings", "usage"].forEach((t) => { $("#tab-" + t).hidden = t !== name; });
+  if (name === "usage" && !lastUsage) loadUsage();
+  if (name === "providers") paintProviders();
+  if (name === "models") paintModels();
+  if (name === "settings") paintSettings();
+}
+
+// ─────────────────────────── LIVE tab ───────────────────────────
+// paintLive(bannerOnly) repaints only the elapsed-timer strip; the full repaint is
+// skipped when neither the in-flight set nor the recent table actually changed.
+function paintLive(bannerOnly) {
+  const s = snap; if (!s) return;
+  const flying = s.inFlight || [];
+
+  const chips = $("#now-chips");
+  const banner = $("#now");
+  banner.classList.toggle("idle", flying.length === 0);
+  $("#now-count").textContent = flying.length
+    ? flying.length + (flying.length === 1 ? " request in flight" : " requests in flight")
+    : "idle";
+  const sig = flying.map((f) => f.id + f.status).join("|");
+  if (sig !== nowSig) {
+    nowSig = sig;
+    chips.replaceChildren();
+    if (!flying.length) {
+      chips.append(el("span", { class: "muted small" }, ["No provider is serving traffic right now."]));
+    } else {
+      const seen = new Map();
+      for (const f of flying) seen.set(f.keyName + f.model, (seen.get(f.keyName + f.model) || 0) + 1);
+      for (const [k, count] of seen) {
+        const f = flying.find((x) => x.keyName + x.model === k);
+        chips.append(el("span", { class: "pill" }, [
+          el("span", { class: "pulse " + (f.status === "connecting" ? "connecting" : "") }),
+          `${f.provider}/${f.model} · ${f.keyName} · ${f.status}` +
+            (count > 1 ? ` ×${count}` : "") + ` · ${((Date.now() - f.startedAt) / 1000).toFixed(1)}s`,
+        ]));
+      }
+    }
+  } else {
+    // same set: just refresh the elapsed timers
+    $$("#now-chips .pill").forEach((n, i) => {
+      const f = flying[i];
+      if (!f) return;
+      const txt = n.lastChild;
+      if (txt) txt.textContent =
+        `${f.provider}/${f.model} · ${f.keyName} · ${f.status}` +
+        ` · ${((Date.now() - f.startedAt) / 1000).toFixed(1)}s`;
+    });
+  }
+  if (bannerOnly) return;
+
+  const c = s.counters;
+  $("#live-counters").textContent =
+    `last 1m: ${c.m1.requests} req / ${c.m1.errors} err · last 5m: ${c.m5.requests} · last 1h: ${c.h1.requests}`;
+
+  const cards = $("#prov-cards");
+  cards.replaceChildren();
+  for (const p of s.providers) {
+    const active = flying.some((f) => f.provider === p.name);
+    const cooling = p.keys.filter((k) => k.cooling);
+    const state = p.disabled ? "disabled"
+      : !p.keysTotal ? "no key"
+      : !p.keysHealthy ? (cooling.length ? "cooling" : "no key")
+      : active ? "active" : "idle";
+    const badgeCls = state === "active" ? "ok" : (state === "disabled" || state === "idle") ? "" : "err";
+    const cd = cooling.length ? cooling.map((k) => `${k.envName} ${k.cooldownSeconds}s`).join(", ") : "";
+    cards.append(el("div", { class: "card" + (p.disabled ? " dis" : "") }, [
+      el("div", { class: "row" }, [
+        el("strong", {}, [p.name]),
+        el("span", { class: "grow" }),
+        el("span", { class: "badge " + badgeCls }, [state]),
+      ]),
+      el("div", { class: "small muted", style: "margin-top:3px;word-break:break-all" }, [p.baseURL]),
+      el("div", { class: "small", style: "margin-top:7px" }, [`${p.keysHealthy}/${p.keysTotal} keys healthy`]),
+      el("div", { class: "small muted" }, [cd ? "cooling: " + cd : "last used " + ago(p.lastUsed)]),
+      el("div", { class: "small muted" }, [
+        `last 5m: ${p.last5m.requests} req / ${p.last5m.errors} err · ${p.models.length} model(s)`,
+      ]),
+    ]));
+  }
+
+  const rows = (s.recent || []).slice().reverse();
+  const rsig = rows.length + ":" + (rows[0] ? rows[0].ts : 0);
+  if (rsig !== recentSig) {
+    recentSig = rsig;
+    const body = $("#recent-body");
+    body.replaceChildren();
+    for (const r of rows) {
+      const okc = r.status < 400 ? "ok" : "err";
+      body.append(el("tr", {}, [
+        el("td", { class: "small muted" }, [clock(r.ts)]),
+        el("td", {}, [el("strong", {}, [r.alias])]),
+        el("td", { class: "small" }, [r.provider + " / " + r.model]),
+        el("td", { class: "small mono" }, [r.key]),
+        el("td", {}, [el("span", { class: "badge " + okc }, [String(r.status)])]),
+        el("td", { class: "num" }, [num(r.ms)]),
+        el("td", { class: "num" }, [num(r.in)]),
+        el("td", { class: "num" }, [num(r.out)]),
+        el("td", { class: "num" }, [num(r.cacheRead)]),
+        el("td", { class: "num" }, [usd(r.cost)]),
+        el("td", { class: "small" }, [r.failover
+          ? el("span", { class: "badge warn", title: r.failover.reason },
+              [r.failover.reason + (r.failover.from && r.failover.from !== r.key ? " -> " + r.key : "")])
+          : ""]),
+      ]));
+    }
+    $("#recent-empty").hidden = rows.length > 0;
+    $("#recent-count").textContent = rows.length + " of last 200";
+  }
+}
+setInterval(() => { if (tab === "live" && snap) paintLive(true); }, 500); // elapsed timers only
+
+// ─────────────────────────── PROVIDERS tab ───────────────────────────
+$("#add-prov").addEventListener("click", () => providerDialog(null));
+
+function paintProviders() {
+  const s = snap; if (!s) return;
+  const body = $("#prov-body");
+  body.replaceChildren();
+  for (const p of s.providers) {
+    const state = p.disabled ? "disabled" : !p.keysTotal ? "no key" : p.keysHealthy ? "ok" : "degraded";
+    body.append(el("tr", {}, [
+      el("td", {}, [el("strong", {}, [p.name])]),
+      el("td", { class: "small mono muted", style: "max-width:280px;overflow:hidden;text-overflow:ellipsis" }, [p.baseURL]),
+      el("td", { class: "small" }, [p.auth]),
+      el("td", { class: "small" }, [`${p.keysHealthy}/${p.keysTotal}`]),
+      el("td", {}, [el("span", { class: "badge " + (state === "ok" ? "ok" : state === "disabled" ? "" : "err") }, [state])]),
+      el("td", {}, [el("div", { class: "row" }, [
+        el("button", { class: "sm", onclick: () => keysDialog(p) }, ["keys (" + p.keysTotal + ")"]),
+        el("button", { class: "sm", onclick: () => providerDialog(p) }, ["edit"]),
+        el("button", { class: "sm", onclick: () => toggleProvider(p) }, [p.disabled ? "enable" : "disable"]),
+        el("button", { class: "sm danger", onclick: () => deleteProvider(p) }, ["delete"]),
+      ])]),
+    ]));
+  }
+}
+
+async function toggleProvider(p) {
+  try {
+    await api("/admin/providers/" + p.name + (p.disabled ? "/enable" : "/disable"), {
+      method: "POST", body: JSON.stringify({ version: snap.version }),
+    });
+    toast(p.name + (p.disabled ? " enabled" : " disabled"), "ok");
+    onSnapshot(await api("/admin/snapshot"));
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function deleteProvider(p) {
+  const used = p.models || [];
+  const body = used.length
+    ? `Provider <code>${esc(p.name)}</code> is used by: <code>${esc(used.join(", "))}</code>.\n\nDeleting it will also delete those models and remove every reference to them (defaultModel, opus/sonnet/haiku, fallback chains).`
+    : `Delete provider <code>${esc(p.name)}</code>?`;
+  if (!(await confirmDialog("Delete provider", body, true))) return;
+  try {
+    const r = await api("/admin/providers/" + p.name + (used.length ? "?cascade=1" : ""), {
+      method: "DELETE", headers: { "x-config-version": snap.version },
+    });
+    toast("Deleted " + p.name + (r.cleanedReferences?.length ? " · cleaned: " + r.cleanedReferences.join(", ") : ""), "ok");
+    onSnapshot(await api("/admin/snapshot"));
+  } catch (e) {
+    const blocked = e.data && e.data.blockedBy;
+    toast(e.message + (blocked ? " (" + blocked.map((b) => b.name).join(", ") + ")" : ""), "err");
+  }
+}
+
+function providerDialog(p) {
+  const isNew = !p;
+  const fields = {
+    name: el("input", { name: "name", value: p ? p.name : "", ...(isNew ? {} : { disabled: "" }), placeholder: "deepseek" }),
+    baseURL: el("input", { name: "baseURL", value: p ? p.baseURL : "", placeholder: "https://api.deepseek.com/anthropic" }),
+    auth: el("select", { name: "auth" }, ["bearer", "x-api-key", "both"].map((a) =>
+      el("option", { value: a, ...(p && p.auth === a ? { selected: "" } : {}) }, [a]))),
+    dropBeta: el("input", { type: "checkbox", name: "dropBeta", ...(p && p.dropBeta ? { checked: "" } : {}) }),
+    disabled: el("input", { type: "checkbox", name: "disabled", ...(p && p.disabled ? { checked: "" } : {}) }),
+    fields: el("div", { class: "chips" }),
+  };
+  const dropFields = p ? (p.dropBodyFields || []).slice() : [];
+  const renderChips = () => {
+    fields.fields.replaceChildren();
+    dropFields.forEach((f, i) => fields.fields.append(el("span", { class: "chip" }, [f,
+      el("button", { type: "button", "aria-label": "remove " + f, onclick: () => { dropFields.splice(i, 1); renderChips(); } }, ["✕"])])));
+    const add = el("input", { placeholder: "+ body field to drop", style: "width:150px" });
+    add.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const v = add.value.trim(); add.value = "";
+        if (v && !dropFields.includes(v)) { dropFields.push(v); renderChips(); }
+      }
+    });
+    fields.fields.append(add);
+  };
+  renderChips();
+
+  const body = el("div", {}, [
+    el("div", { class: "fgrid" }, [
+      el("div", {}, [el("label", {}, ["Name"]), fields.name]),
+      el("div", {}, [el("label", {}, ["Auth mode"]), fields.auth]),
+      el("div", { class: "full" }, [el("label", {}, ["Base URL (https)"]), fields.baseURL]),
+      el("div", { class: "full" }, [el("label", {}, ["Drop body fields (press Enter to add)"]), fields.fields]),
+      el("div", {}, [el("label", {}, ["Drop anthropic-beta header"]), fields.dropBeta]),
+      el("div", {}, [el("label", {}, ["Disabled (skipped by failover)"]), fields.disabled]),
+    ]),
+    el("div", { class: "errs" }),
+  ]);
+  showDialog(isNew ? "Add provider" : "Edit " + p.name, body, [
+    { label: "Cancel", value: "cancel" },
+    { label: isNew ? "Create" : "Save", value: "ok", primary: true, keepOpen: true,
+      onClick: async (dlg) => {
+        const payload = {
+          name: fields.name.value.trim(),
+          baseURL: fields.baseURL.value.trim(),
+          auth: fields.auth.value,
+          dropBeta: fields.dropBeta.checked,
+          disabled: fields.disabled.checked,
+          dropBodyFields: dropFields,
+          version: snap.version,
+        };
+        try {
+          await api(isNew ? "/admin/providers" : "/admin/providers/" + p.name,
+            { method: isNew ? "POST" : "PUT", body: JSON.stringify(payload) });
+          dlg.close(); toast("Provider saved", "ok");
+          onSnapshot(await api("/admin/snapshot"));
+        } catch (e) { showFieldErrors(body, e); }
+      } },
+  ]);
+}
+
+// ── key manager ──
+async function keysDialog(p) {
+  const body = el("div", {});
+  const errs = el("div", { class: "errs" });
+  const refresh = async () => {
+    const fresh = await api("/admin/providers/" + p.name);
+    onSnapshot(await api("/admin/snapshot"));
+    paintKeyRows(fresh.provider);
+  };
+  const keyRows = el("div", {});
+  const paintKeyRows = (prov) => {
+    keyRows.replaceChildren();
+    if (!prov.keys.length) keyRows.append(el("div", { class: "empty small" }, ["No keys yet."]));
+    for (const k of prov.keys) {
+      keyRows.append(el("div", { class: "row", style: "padding:6px 0;border-bottom:1px solid var(--line)" }, [
+        el("code", {}, [k.envName]),
+        el("span", { class: "badge " + (k.configured ? (k.cooling ? "warn" : "ok") : "err") },
+          [k.configured ? (k.cooling ? "cooling " + k.cooldownSeconds + "s" : "configured") : "no value"]),
+        el("span", { class: "small muted mono" }, [k.configured ? "····" + k.last4 : ""]),
+        el("span", { class: "small muted" }, ["last used " + ago(k.lastUsed)]),
+        el("span", { class: "grow" }),
+        k.cooling ? el("button", { class: "sm", onclick: () => resetCooldown(k.envName) }, ["reset"]) : "",
+        el("button", { class: "sm", onclick: () => replaceKey(p, k.envName) }, ["replace"]),
+        el("button", { class: "sm danger", onclick: () => removeKey(p, k.envName) }, ["remove"]),
+      ]));
+    }
+  };
+  const envName = el("input", { placeholder: "PROVIDER_KEY_1", style: "flex:1" });
+  const secret = el("input", { type: "password", placeholder: "paste key value", style: "flex:1", autocomplete: "off" });
+  body.append(
+    el("p", { class: "small muted", style: "margin-top:0" },
+      ["Key values are write-only. They are stored in .env only and are never shown again."]),
+    keyRows,
+    el("fieldset", {}, [el("legend", {}, ["Add key"]), el("div", { class: "row" }, [envName, secret]),
+      el("div", { class: "small muted", style: "margin-top:7px" },
+        ["Applies immediately - no restart needed. The next request can already use it."])]),
+    errs
+  );
+  paintKeyRows(p);
+  showDialog("Keys · " + p.name, body, [
+    { label: "Close", value: "cancel" },
+    { label: "Add key", value: "add", primary: true, keepOpen: true,
+      onClick: async () => {
+        errs.replaceChildren();
+        try {
+          await api("/admin/providers/" + p.name + "/keys", {
+            method: "POST",
+            body: JSON.stringify({ envName: envName.value.trim(), value: secret.value, version: snap.version }),
+          });
+          secret.value = "";
+          toast("Key saved to .env", "ok");
+          await refresh();
+        } catch (e) { showFieldErrors(body, e, errs); }
+      } },
+  ]);
+}
+
+async function resetCooldown(envName) {
+  try { await api("/admin/keys/" + envName + "/reset-cooldown", { method: "POST" }); toast("Cooldown cleared for " + envName, "ok"); onSnapshot(await api("/admin/snapshot")); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+function replaceKey(p, envName) {
+  const secret = el("input", { type: "password", autocomplete: "off", placeholder: "new key value" });
+  const body = el("div", {}, [
+    el("p", { class: "small muted", style: "margin-top:0" }, ["Replaces the value of " + envName + " in .env."]),
+    el("label", {}, ["New value"]), secret, el("div", { class: "errs" }),
+  ]);
+  showDialog("Replace " + envName, body, [
+    { label: "Cancel", value: "cancel" },
+    { label: "Replace", value: "ok", primary: true, keepOpen: true,
+      onClick: async (dlg) => {
+        try {
+          await api("/admin/providers/" + p.name + "/keys", { method: "POST",
+            body: JSON.stringify({ envName, value: secret.value, version: snap.version }) });
+          dlg.close(); toast(envName + " replaced", "ok"); onSnapshot(await api("/admin/snapshot"));
+        } catch (e) { showFieldErrors(body, e); }
+      } },
+  ]);
+}
+
+async function removeKey(p, envName) {
+  if (!(await confirmDialog("Remove key", "Remove <code>" + esc(envName) + "</code> from <code>" + esc(p.name) + "</code>? The line is deleted from .env and the variable is unset.", true))) return;
+  try {
+    await api("/admin/providers/" + p.name + "/keys/" + envName, { method: "DELETE", body: JSON.stringify({ version: snap.version }) });
+    toast(envName + " removed", "ok"); onSnapshot(await api("/admin/snapshot"));
+  } catch (e) {
+    const b = e.data && e.data.blockedBy;
+    toast(e.message + (b ? " (pinned by " + b.map((x) => x.name).join(", ") + ")" : ""), "err");
+  }
+}
+
+// ─────────────────────────── MODELS tab ───────────────────────────
+$("#add-model").addEventListener("click", () => modelDialog(null));
+
+function paintModels() {
+  const s = snap; if (!s) return;
+  const body = $("#model-body");
+  body.replaceChildren();
+  for (const m of s.models) {
+    const prov = s.providers.find((p) => p.name === m.provider);
+    const tier = prov && prov.disabled ? el("span", { class: "badge err" }, ["provider disabled"])
+      : m.providerMissing ? el("span", { class: "badge err" }, ["no provider"])
+      : !m.keysTotal ? el("span", { class: "badge err" }, ["no key"])
+      : !m.keysHealthy ? el("span", { class: "badge warn" }, ["keys cooling"])
+      : el("span", { class: "badge ok" }, ["ok"]);
+    body.append(el("tr", {}, [
+      el("td", {}, [el("strong", {}, [m.alias]), " ", tier]),
+      el("td", { class: "small" }, [m.provider]),
+      el("td", { class: "small mono" }, [m.model]),
+      el("td", { class: "small mono muted" }, [m.key || "pool (" + m.keysTotal + ")"]),
+      el("td", { class: "num" }, [m.maxOutputTokens ? num(m.maxOutputTokens) : "-"]),
+      el("td", { class: "small mono muted" }, [(m.fallback || []).join(" → ") || "-"]),
+      el("td", { class: "small num" }, [m.price ? m.price.in + " / " + m.price.out : "-"]),
+      el("td", {}, [el("div", { class: "row" }, [
+        el("button", { class: "sm", onclick: () => testModel(m) }, ["test"]),
+        el("button", { class: "sm", onclick: () => modelDialog(m) }, ["edit"]),
+        el("button", { class: "sm danger", onclick: () => deleteModel(m) }, ["delete"]),
+      ])]),
+    ]));
+  }
+}
+
+async function deleteModel(m) {
+  if (!(await confirmDialog("Delete model", "Delete <code>" + esc(m.alias) + "</code>? If other models fall back to it, you will be asked to clean those references.", true))) return;
+  try {
+    const r = await api("/admin/models/" + m.alias, { method: "DELETE", body: JSON.stringify({ version: snap.version }) });
+    toast("Deleted " + m.alias, "ok");
+    if (r.cleanedReferences?.length) toast("Cleaned: " + r.cleanedReferences.join(", "), "ok");
+    onSnapshot(await api("/admin/snapshot"));
+  } catch (e) {
+    const b = e.data && e.data.blockedBy;
+    if (b && await confirmDialog("Still referenced",
+      "<code>" + esc(m.alias) + "</code> is referenced by:<br>" + b.map((x) => esc(x.type + ": " + x.name)).join("<br>") +
+      "<br><br>Delete it and clean those references?", true)) {
+      try {
+        const r = await api("/admin/models/" + m.alias + "?cascade=1", { method: "DELETE", body: JSON.stringify({ version: snap.version }) });
+        toast("Deleted " + m.alias + " · cleaned: " + (r.cleanedReferences || []).join(", "), "ok");
+        onSnapshot(await api("/admin/snapshot"));
+      } catch (e2) { toast(e2.message, "err"); }
+    } else if (!b) toast(e.message, "err");
+  }
+}
+
+async function testModel(m) {
+  if (!(await confirmDialog("Test connection",
+    "This sends ONE request to <code>" + esc(m.provider) + "</code> with <code>max_tokens: 1</code>.<br><br>" +
+    "<strong>It consumes a few tokens.</strong>", false))) return;
+  try {
+    const r = await api("/admin/models/" + m.alias + "/test", { method: "POST", body: JSON.stringify({ confirm: true }) });
+    toast(r.ok ? `OK ${r.status} in ${r.ms}ms via ${r.key.envName}` : `FAILED ${r.status || "network"}: ${r.detail}`, r.ok ? "ok" : "err");
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function modelDialog(m) {
+  const isNew = !m;
+  const prov = m ? m.provider : (snap.providers[0] && snap.providers[0].name);
+  let provider = prov, pinned = m ? m.key || "" : "";
+  let fallback = m ? (m.fallback || []).slice() : [];
+
+  const providerSel = el("select", {}, snap.providers.map((p) =>
+    el("option", { value: p.name, ...(p.name === provider ? { selected: "" } : {}) }, [p.name + (p.disabled ? " (disabled)" : "")])));
+  const modelIn = el("input", { value: m ? m.model : "", placeholder: "deepseek-v4-pro" });
+  const keySel = el("select", {});
+  const maxIn = el("input", { type: "number", min: "1", step: "1", value: m && m.maxOutputTokens ? m.maxOutputTokens : "" });
+  const priceIn = el("input", { type: "number", step: "0.01", min: "0", value: m && m.price ? m.price.in : "" });
+  const priceOut = el("input", { type: "number", step: "0.01", min: "0", value: m && m.price ? m.price.out : "" });
+  const priceCache = el("input", { type: "number", step: "0.01", min: "0", value: m && m.price && m.price.cacheRead != null ? m.price.cacheRead : "" });
+  const fbBox = el("div", { class: "chips" });
+
+  const paintKeys = () => {
+    const p = snap.providers.find((x) => x.name === provider);
+    keySel.replaceChildren(el("option", { value: "" }, ["pool (all keys)"]));
+    for (const k of (p ? p.keys : [])) {
+      keySel.append(el("option", { value: k.envName, ...(k.envName === pinned ? { selected: "" } : {}) },
+        [k.envName + (k.configured ? "" : " (no value)")]));
+    }
+    if (pinned && !(p ? p.keys : []).some((k) => k.envName === pinned)) keySel.append(el("option", { value: pinned, selected: "" }, [pinned + " (missing)"]));
+  };
+  const paintFallback = () => {
+    fbBox.replaceChildren();
+    fallback.forEach((f, i) => fbBox.append(el("span", { class: "chip" }, [f,
+      el("button", { type: "button", "aria-label": "move up", onclick: () => { if (i > 0) { [fallback[i - 1], fallback[i]] = [fallback[i], fallback[i - 1]]; paintFallback(); } } }, ["↑"]),
+      el("button", { type: "button", "aria-label": "move down", onclick: () => { if (i < fallback.length - 1) { [fallback[i + 1], fallback[i]] = [fallback[i], fallback[i + 1]]; paintFallback(); } } }, ["↓"]),
+      el("button", { type: "button", "aria-label": "remove " + f, onclick: () => { fallback.splice(i, 1); paintFallback(); } }, ["✕"])])));
+    const add = el("select", { style: "width:150px" });
+    add.append(el("option", { value: "" }, ["+ add fallback"]));
+    for (const mm of snap.models) if (mm.alias !== (m ? m.alias : "") && !fallback.includes(mm.alias))
+      add.append(el("option", { value: mm.alias }, [mm.alias + " (" + mm.provider + ")"]));
+    add.addEventListener("change", () => {
+      if (add.value) { fallback.push(add.value); add.value = ""; paintFallback(); }
+    });
+    fbBox.append(add);
+  };
+  providerSel.addEventListener("change", () => { provider = providerSel.value; pinned = ""; paintKeys(); });
+  keySel.addEventListener("change", () => { pinned = keySel.value; });
+  paintKeys(); paintFallback();
+
+  const warn = el("div");
+  const checkWarn = () => {
+    warn.replaceChildren();
+    const others = fallback.map((f) => snap.models.find((x) => x.alias === f)).filter(Boolean);
+    const sameProvider = others.filter((f) => f.provider !== provider);
+    if (sameProvider.length) {
+      warn.append(el("div", { class: "warnbox" },
+        ["Warning: fallback crosses providers (quality tier may differ): " + sameProvider.map((f) => f.alias + " → " + f.provider).join(", ")]));
+    }
+  };
+  providerSel.addEventListener("change", checkWarn);
+  checkWarn();
+
+  const body = el("div", {}, [
+    warn,
+    el("div", { class: "fgrid" }, [
+      el("div", {}, [el("label", {}, ["Alias"]), el("input", { value: m ? m.alias : "", ...(isNew ? {} : { disabled: "" }), placeholder: "ds-pro" })]),
+      el("div", {}, [el("label", {}, ["Provider"]), providerSel]),
+      el("div", { class: "full" }, [el("label", {}, ["Upstream model string"]), modelIn]),
+      el("div", {}, [el("label", {}, ["Pinned key (or pool)"]), keySel]),
+      el("div", {}, [el("label", {}, ["Max output tokens"]), maxIn]),
+      el("div", {}, [el("label", {}, ["Price in (USD/1M)"]), priceIn]),
+      el("div", {}, [el("label", {}, ["Price out (USD/1M)"]), priceOut]),
+      el("div", {}, [el("label", {}, ["Price cache read"]), priceCache]),
+      el("div", { class: "full" }, [el("label", {}, ["Fallback chain (order matters)"]), fbBox]),
+    ]),
+    el("div", { class: "errs" }),
+  ]);
+
+  showDialog(isNew ? "Add model" : "Edit " + m.alias, body, [
+    { label: "Cancel", value: "cancel" },
+    { label: isNew ? "Create" : "Save", value: "ok", primary: true, keepOpen: true,
+      onClick: async (dlg) => {
+        const aliasIn = body.querySelector('input[placeholder="ds-pro"]');
+        const price = priceIn.value || priceOut.value
+          ? { in: Number(priceIn.value || 0), out: Number(priceOut.value || 0),
+              ...(priceCache.value !== "" ? { cacheRead: Number(priceCache.value) } : {}) }
+          : undefined;
+        const payload = {
+          alias: aliasIn.value.trim(),
+          provider: providerSel.value,
+          model: modelIn.value.trim(),
+          key: keySel.value || null,
+          maxOutputTokens: maxIn.value === "" ? undefined : Number(maxIn.value),
+          price,
+          fallback,
+          version: snap.version,
+        };
+        try {
+          await api(isNew ? "/admin/models" : "/admin/models/" + m.alias,
+            { method: isNew ? "POST" : "PUT", body: JSON.stringify(payload) });
+          dlg.close(); toast("Model saved", "ok"); onSnapshot(await api("/admin/snapshot"));
+        } catch (e) { showFieldErrors(body, e); }
+      } },
+  ]);
+}
+
+// ─────────────────────────── SETTINGS tab ───────────────────────────
+const ENV_VARS = [["opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"], ["sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"], ["haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"]];
+
+function paintSettings() {
+  const s = snap; if (!s) return;
+  const fill = (sel, value) => {
+    const n = $(sel);
+    n.replaceChildren(el("option", { value: "" }, ["(not set)"]));
+    for (const m of s.models) n.append(el("option", { value: m.alias, ...(m.alias === value ? { selected: "" } : {}) }, [m.alias]));
+    n.value = value || "";
+  };
+  fill("#s-default", s.defaultModel);
+  fill("#s-opus", s.aliases.opus); fill("#s-sonnet", s.aliases.sonnet); fill("#s-haiku", s.aliases.haiku);
+  $("#s-version").textContent = "config version " + s.version;
+  $("#f-routes").textContent = s.routesFile;
+  $("#f-version").textContent = s.version;
+  $("#f-env").textContent = s.envFile;
+  $("#f-backups").textContent = s.backupDir;
+  $("#env-snippet").textContent = envSnippet();
+}
+
+function envSnippet() {
+  const s = snap;
+  const lines = [
+    '"env": {',
+    '  "ANTHROPIC_BASE_URL": "http://127.0.0.1:' + (s ? s.port : 21450) + '",',
+    '  "ANTHROPIC_AUTH_TOKEN": "<your ROUTER_KEY>",',
+    '  "ANTHROPIC_API_KEY": "",',
+    '  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,',
+  ];
+  for (const [slot, envVar] of ENV_VARS) {
+    const target = s && s.aliases[slot];
+    lines.push('  "' + envVar + '": "' + (target || "<model alias>") + '"');
+  }
+  lines.push('  "ANTHROPIC_SMALL_FAST_MODEL": "' + ((s && s.aliases.haiku) || (s && s.defaultModel) || "<cheap alias>") + '"');
+  lines.push("}");
+  return lines.join("\n");
+}
+
+$("#copy-env").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(envSnippet());
+    $("#copy-msg").textContent = "copied";
+    setTimeout(() => ($("#copy-msg").textContent = ""), 2000);
+  } catch { toast("Clipboard blocked - select the text and copy manually", "err"); }
+});
+
+$("#settings-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = {
+    defaultModel: $("#s-default").value,
+    aliases: { opus: $("#s-opus").value, sonnet: $("#s-sonnet").value, haiku: $("#s-haiku").value },
+    version: snap.version,
+  };
+  try {
+    await api("/admin/settings", { method: "PUT", body: JSON.stringify(payload) });
+    toast("Settings saved", "ok"); settingsDirty = false; $("#dirty-bar").hidden = true;
+    onSnapshot(await api("/admin/snapshot"));
+  } catch (err) { showFieldErrors(e.currentTarget, err); }
+});
+$("#settings-form").addEventListener("input", () => {
+  settingsDirty = true; $("#dirty-bar").hidden = false;
+});
+$("#s-reset").addEventListener("click", () => {
+  settingsDirty = false; $("#dirty-bar").hidden = true;
+  paintSettings(); paintProviders(); paintModels();
+  toast("Reverted to the saved config", "ok");
+});
+
+// ─────────────────────────── USAGE tab ───────────────────────────
+$("#range-picker").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-range]");
+  if (!b) return;
+  range = b.dataset.range;
+  $$("#range-picker button").forEach((x) => (x.style.borderColor = x === b ? "var(--acc)" : ""));
+  loadUsage();
+});
+$("#usage-refresh").addEventListener("click", () => loadUsage());
+
+async function loadUsage() {
+  const out = $("#usage-body");
+  out.replaceChildren(el("div", { class: "empty" }, [el("span", { class: "spin" })]));
+  try {
+    const u = await api("/admin/usage/summary?range=" + range);
+    lastUsage = u;
+    out.replaceChildren();
+    if (!u.totals.requests) {
+      out.append(el("div", { class: "empty" },
+        ["No usage recorded for this range yet (" + esc(u.logFile) + ")."]));
+      return;
+    }
+    const t = u.totals;
+    out.append(el("div", { class: "grid cards", style: "margin-bottom:14px" }, [
+      card("Requests", num(t.requests)), card("Error rate", pct(t.errorRate)),
+      card("Input tokens", num(t.in)), card("Output tokens", num(t.out)),
+      card("Cache read", num(t.cacheRead)), card("Cache-hit ratio", pct(t.cacheHitRatio)),
+      card("Cache write", num(t.cacheWrite)), card("Cost", usd(t.cost)),
+    ]));
+    out.append(el("h3", { style: "margin:0 0 6px" }, ["Traffic · bucket " + u.bucketLabel]));
+    out.append(chart(u.timeline));
+    out.append(el("h3", { style: "margin:16px 0 6px" }, ["By model"]));
+    out.append(table(["Model", "Provider", "Req", "Errors", "in", "out", "cacheR", "Hit", "Cost"],
+      u.byAlias.map((r) => [r.name, r.provider || "-", num(r.requests), pct(r.errorRate), num(r.in),
+        num(r.out), num(r.cacheRead), pct(r.cacheHitRatio), usd(r.cost)])));
+    out.append(el("h3", { style: "margin:16px 0 6px" }, ["By provider"]));
+    out.append(table(["Provider", "Req", "Errors", "in", "out", "cacheR", "Hit", "Cost"],
+      u.byProvider.map((r) => [r.name, num(r.requests), pct(r.errorRate), num(r.in),
+        num(r.out), num(r.cacheRead), pct(r.cacheHitRatio), usd(r.cost)])));
+    if (u.top.length) {
+      out.append(el("h3", { style: "margin:16px 0 6px" }, ["10 largest requests"]));
+      out.append(table(["Time", "Model", "Route", "in", "out", "Cost"],
+        u.top.map((r) => [clock(r.ts), r.alias, r.provider + " / " + r.model, num(r.in), num(r.out), usd(r.cost)])));
+    }
+    if (u.corruptLines) out.append(el("div", { class: "small muted", style: "margin-top:9px" },
+      [u.corruptLines + " corrupt log line(s) skipped."]));
+  } catch (e) {
+    out.replaceChildren(el("div", { class: "empty" }, [e.message]));
+  }
+}
+function card(label, value) {
+  return el("div", { class: "card" }, [
+    el("div", { class: "small muted" }, [label]),
+    el("div", { style: "font-size:19px;font-weight:650;margin-top:2px" }, [value]),
+  ]);
+}
+function table(head, rows) {
+  return el("div", { class: "card scroll", style: "padding:0" }, [
+    el("table", {}, [
+      el("thead", {}, [el("tr", {}, head.map((h, i) =>
+        el("th", { ...(i > 0 ? { class: "num" } : {}) }, [h])))]),
+      el("tbody", {}, rows.map((r) => el("tr", {}, r.map((c, i) =>
+        el("td", { ...(i > 0 ? { class: "num" } : {}) }, [String(c)]))))),
+    ]),
+  ]);
+}
+// Inline SVG bar chart - no library, no external requests.
+function chart(points) {
+  const W = 900, H = 130, pad = 6;
+  const max = Math.max(1, ...points.map((p) => p.requests));
+  const bw = points.length ? (W - pad * 2) / points.length : W;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", H);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "requests per bucket");
+  const mk = (tag, attrs) => {
+    const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  };
+  const g = mk("g", {});
+  points.forEach((p, i) => {
+    const h = Math.max(2, (p.requests / max) * (H - 24));
+    const r = mk("rect", {
+      x: pad + i * bw, y: H - 16 - h, width: Math.max(1, bw - 2), height: h, rx: 2,
+      class: "bar" + (p.errors ? " warn" : ""),
+    });
+    const title = mk("title", {});
+    title.textContent = clock(p.ts) + " · " + p.requests + " req · in " + num(p.in) + " · out " + num(p.out) + " · " + usd(p.cost);
+    r.append(title);
+    g.append(r);
+  });
+  svg.append(g);
+  const first = points[0], last = points[points.length - 1];
+  if (first && last) {
+    const a = mk("text", { x: pad, y: 12, class: "chart-lab" });
+    a.textContent = clock(first.ts);
+    const b = mk("text", { x: W - pad, y: 12, class: "chart-lab", "text-anchor": "end" });
+    b.textContent = clock(last.ts) + " · peak " + max;
+    svg.append(a, b);
+  }
+  return el("div", { class: "card", style: "padding:9px" }, [svg]);
+}
+
+// ─────────────────────────── modal plumbing ───────────────────────────
+const modal = $("#modal");
+function showFieldErrors(scope, err, explicit) {
+  const box = explicit || scope.querySelector(".errs") || $("#s-errs");
+  box.replaceChildren();
+  const list = (err.data && err.data.errors) || [{ field: "error", message: err.message }];
+  for (const e of list) box.append(el("div", {}, [e.field + ": " + e.message]));
+  if (err.status === 409) box.append(el("div", {}, ["The file changed on disk - press Revert to reload, then retry."]));
+  if (err.status === 429) box.append(el("div", {}, ["Wait for the current cooldown to expire or use the reset button."]));
+}
+function showDialog(title, body, buttons) {
+  $("#m-title").textContent = title;
+  const b = $("#m-body");
+  b.replaceChildren(body);
+  const foot = $("#m-foot");
+  foot.replaceChildren();
+  for (const btn of buttons) {
+    // keepOpen buttons must not submit the <form method="dialog">, or the dialog
+    // would close before the server validated the payload.
+    const node = el("button", {
+      type: btn.keepOpen ? "button" : "submit",
+      class: btn.primary ? "primary" : "",
+      value: btn.value,
+    }, [btn.label]);
+    if (btn.keepOpen) {
+      node.addEventListener("click", async () => {
+        node.disabled = true;
+        try { await btn.onClick(modal); } finally { node.disabled = false; }
+      });
+    }
+    foot.append(node);
+  }
+  modal.showModal();
+}
+function confirmDialog(title, html, danger) {
+  return new Promise((resolve) => {
+    const body = el("div", { html: `<p style="margin:0">${html}</p>` });
+    const onClose = () => resolve(modal.returnValue === "ok");
+    showDialog(title, body, [
+      { label: "Cancel", value: "cancel" },
+      { label: danger ? "Delete" : "Continue", value: "ok", primary: !danger },
+    ]);
+    modal.addEventListener("close", onClose, { once: true });
+  });
+}
+window.addEventListener("beforeunload", (e) => {
+  if (settingsDirty || modal.open) { e.preventDefault(); e.returnValue = ""; }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input,select,textarea")) return;
+  const i = ["live", "providers", "models", "settings", "usage"].indexOf(tab);
+  if (e.key === "[" && i > 0) selectTab(["live", "providers", "models", "settings", "usage"][i - 1]);
+  if (e.key === "]" && i < 4) selectTab(["live", "providers", "models", "settings", "usage"][i + 1]);
+});
+
+// ─────────────────────────── boot ───────────────────────────
+(function boot() {
+  const saved = sessionStorage.getItem(KEY_STORAGE);
+  if (saved) {
+    ROUTER_KEY = saved;
+    api("/admin/snapshot").then((s) => {
+      onSnapshot(s);
+      $("#gate").hidden = true;
+      selectTab("live");
+      startStream();
+    }).catch(() => lock());
+  } else {
+    $("#gate-key").focus();
+  }
+})();
+</script>
+</body>
+</html>

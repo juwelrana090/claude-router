@@ -4,90 +4,20 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { once } from "node:events";
 
-const ROOT = process.env.ROUTER_HOME ?? path.resolve(__dirname, "..");
+import { Config, ModelCfg, PORT, ProviderCfg, ROOT, ROUTER_KEY, getCfg } from "./config";
+import { handleAdmin, hostAllowed, originAllowed } from "./admin";
+import * as live from "./live";
+import { buildBody, buildHeaders, keyOrder, resolveAlias } from "./routing";
 
-// ---------- .env (must run BEFORE reading any process.env constant) ----------
-function loadEnv(): void {
-  const file = path.join(ROOT, ".env");
-  if (!fs.existsSync(file)) return;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const i = t.indexOf("=");
-    if (i === -1) continue;
-    const k = t.slice(0, i).trim();
-    let v = t.slice(i + 1).trim();
-    // strip inline comment (only when preceded by whitespace) and surrounding quotes
-    if (!/^["']/.test(v)) v = v.replace(/\s+#.*$/, "");
-    if (
-      (v.startsWith('"') && v.endsWith('"')) ||
-      (v.startsWith("'") && v.endsWith("'"))
-    ) {
-      v = v.slice(1, -1);
-    }
-    if (process.env[k] === undefined) process.env[k] = v;
-  }
-}
-loadEnv();
-
-const PORT = Number(process.env.ROUTER_PORT || 21450);
-const ROUTER_KEY = process.env.ROUTER_KEY || "";
 if (!ROUTER_KEY) {
   console.error("ROUTER_KEY is missing in .env - refusing to start without auth.");
   process.exit(1);
 }
 
-// ---------- config (routes.json, hot-reloaded) ----------
-type AuthMode = "bearer" | "x-api-key" | "both";
-
-interface ProviderCfg {
-  baseURL: string;
-  auth: AuthMode;
-  keys: string[]; // env var NAMES, not the secrets
-  dropBeta?: boolean;
-  dropBodyFields?: string[];
-}
-
-interface ModelCfg {
-  provider: string;
-  model: string;
-  key?: string; // pin this model to one specific key (env var name)
-  maxOutputTokens?: number;
-  fallback?: string[]; // other router model names, tried in order
-  price?: { in: number; out: number; cacheRead?: number }; // USD per 1M tokens
-}
-
-interface Config {
-  defaultModel?: string;
-  aliases?: Record<string, string>;
-  providers: Record<string, ProviderCfg>;
-  models: Record<string, ModelCfg>;
-}
-
-const ROUTES_FILE = path.join(ROOT, process.env.ROUTES_FILE ?? "routes.json");
-let cfg: Config | undefined;
-let cfgMtime = 0;
-
-function getCfg(): Config {
-  try {
-    const m = fs.statSync(ROUTES_FILE).mtimeMs;
-    if (!cfg || m !== cfgMtime) {
-      cfg = JSON.parse(fs.readFileSync(ROUTES_FILE, "utf8")) as Config;
-      cfgMtime = m;
-      if (cfg) console.log(`[ROUTER] routes loaded (${Object.keys(cfg.models).length} models)`);
-    }
-  } catch (e) {
-    if (!cfg) throw e;
-    console.warn("[ROUTER] routes.json invalid, keeping previous config:", (e as Error).message);
-  }
-  return cfg as Config;
-}
-
 // ---------- state ----------
-const cooldown = new Map<string, number>(); // key env name -> epoch ms
-interface Usage { in: number; out: number; cacheRead: number; cacheWrite: number }
-const zero = (): Usage => ({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0 });
-const totals = new Map<string, Usage & { requests: number; cost: number }>();
+interface UsageTotals { in: number; out: number; cacheRead: number; cacheWrite: number }
+const ZERO = (): UsageTotals => ({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0 });
+const totals = new Map<string, UsageTotals & { requests: number; cost: number }>();
 fs.mkdirSync(path.join(ROOT, "logs"), { recursive: true });
 
 // ---------- helpers ----------
@@ -119,60 +49,7 @@ function authed(req: IncomingMessage): boolean {
   return safeEq(bearer, ROUTER_KEY) || safeEq(xk, ROUTER_KEY);
 }
 
-function headerValue(v: string | string[] | undefined): string | undefined {
-  return Array.isArray(v) ? v.join(",") : v;
-}
-
-function resolveAlias(c: Config, raw: string): string | undefined {
-  const name = raw.replace(/\[[^\]]*\]$/, "").trim(); // "sonnet[1m]" -> "sonnet"
-  if (c.models[name]) return name;
-  const lower = name.toLowerCase();
-  for (const [needle, target] of Object.entries(c.aliases ?? {})) {
-    if (lower.includes(needle) && c.models[target]) return target;
-  }
-  if (c.defaultModel && c.models[c.defaultModel]) {
-    console.warn(`[ROUTER] unknown model "${raw}" -> default "${c.defaultModel}"`);
-    return c.defaultModel;
-  }
-  return undefined;
-}
-
-// Sticky key choice keeps the provider-side prompt cache warm (cache is per account/key).
-function keyOrder(p: ProviderCfg, m: ModelCfg, seed: string): string[] {
-  if (m.key) return process.env[m.key] ? [m.key] : [];
-  const names = p.keys.filter((k) => process.env[k]);
-  if (!names.length) return [];
-  const start = crypto.createHash("sha1").update(seed).digest().readUInt32BE(0) % names.length;
-  return names.map((_, i) => names[(start + i) % names.length]);
-}
-
-function cool(key: string, ms: number): void {
-  cooldown.set(key, Date.now() + ms);
-}
-
-function buildHeaders(req: IncomingMessage, p: ProviderCfg, keyName: string): Record<string, string> {
-  const key = process.env[keyName] as string;
-  const h: Record<string, string> = {
-    "content-type": "application/json",
-    "anthropic-version": headerValue(req.headers["anthropic-version"]) || "2023-06-01",
-  };
-  if (p.auth === "bearer" || p.auth === "both") h["authorization"] = `Bearer ${key}`;
-  if (p.auth === "x-api-key" || p.auth === "both") h["x-api-key"] = key;
-  const beta = headerValue(req.headers["anthropic-beta"]);
-  if (beta && !p.dropBeta) h["anthropic-beta"] = beta;
-  return h;
-}
-
-function buildBody(body: Record<string, unknown>, m: ModelCfg, p: ProviderCfg): string {
-  const out: Record<string, unknown> = { ...body, model: m.model };
-  for (const f of p.dropBodyFields ?? []) delete out[f];
-  if (m.maxOutputTokens && typeof out.max_tokens === "number" && out.max_tokens > m.maxOutputTokens) {
-    out.max_tokens = m.maxOutputTokens; // clamp DOWN only
-  }
-  return JSON.stringify(out);
-}
-
-function mergeUsage(u: Usage, x: any): void {
+function mergeUsage(u: UsageTotals, x: any): void {
   if (!x || typeof x !== "object") return;
   const n = (v: unknown) => (typeof v === "number" ? v : 0);
   u.in = Math.max(u.in, n(x.input_tokens));
@@ -181,7 +58,7 @@ function mergeUsage(u: Usage, x: any): void {
   u.cacheWrite = Math.max(u.cacheWrite, n(x.cache_creation_input_tokens));
 }
 
-function sniffSSE(event: string, u: Usage): void {
+function sniffSSE(event: string, u: UsageTotals): void {
   for (const line of event.split("\n")) {
     if (!line.startsWith("data:")) continue;
     try {
@@ -195,11 +72,11 @@ function sniffSSE(event: string, u: Usage): void {
 }
 
 function record(
-  alias: string, m: ModelCfg, keyName: string, u: Usage, status: number, ms: number
+  alias: string, m: ModelCfg, keyName: string, u: UsageTotals, status: number, ms: number
 ): void {
   const p = m.price;
   const cost = p ? (u.in * p.in + u.out * p.out + u.cacheRead * (p.cacheRead ?? p.in)) / 1e6 : 0;
-  const t = totals.get(alias) ?? { ...zero(), requests: 0, cost: 0 };
+  const t = totals.get(alias) ?? { ...ZERO(), requests: 0, cost: 0 };
   t.requests++; t.in += u.in; t.out += u.out; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite; t.cost += cost;
   totals.set(alias, t);
   const line = { ts: new Date().toISOString(), alias, provider: m.provider, model: m.model, key: keyName, status, ms, ...u, cost };
@@ -212,9 +89,9 @@ function record(
 // ---------- main proxy ----------
 async function relay(
   up: Response, res: ServerResponse, body: Record<string, unknown>,
-  alias: string, m: ModelCfg, keyName: string, started: number
+  alias: string, m: ModelCfg, keyName: string, started: number, track?: live.InFlight
 ): Promise<void> {
-  const u = zero();
+  const u = ZERO();
   res.statusCode = up.status;
   const ct = up.headers.get("content-type");
   if (ct) res.setHeader("content-type", ct);
@@ -223,6 +100,7 @@ async function relay(
   if (body.stream && up.body) {
     res.setHeader("cache-control", "no-cache");
     res.flushHeaders();
+    live.markStreaming(track?.id ?? "");
     const dec = new TextDecoder();
     let buf = "";
     try {
@@ -245,6 +123,18 @@ async function relay(
     res.end(text);
   }
   record(alias, m, keyName, u, up.status, Date.now() - started);
+  if (track) {
+    live.finishRequest(track.id, {
+      alias, provider: m.provider, model: m.model, key: keyName, status: up.status,
+      ms: Date.now() - started, ...u, cost: costOf(m, u),
+    });
+  }
+}
+
+function costOf(m: ModelCfg, u: UsageTotals): number {
+  const p = m.price;
+  if (!p) return 0;
+  return (u.in * p.in + u.out * p.out + u.cacheRead * (p.cacheRead ?? p.in)) / 1e6;
 }
 
 async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -256,7 +146,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     return fail(res, 400, "invalid_request_error", "model is required");
   }
 
-  const c = getCfg();
+  const c: Config = getCfg();
   const alias = resolveAlias(c, body.model);
   if (!alias) {
     return fail(res, 400, "invalid_request_error",
@@ -278,13 +168,30 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
 
   for (const routeName of chain) {
     const m = c.models[routeName];
-    const p = c.providers[m.provider];
-    if (!p) continue;
+    const p: ProviderCfg | undefined = c.providers[m.provider];
+    if (!p || p.disabled) {
+      if (p?.disabled) console.warn(`[ROUTER] provider ${m.provider} is disabled, skipping`);
+      continue;
+    }
+
+    let track: live.InFlight | undefined;
 
     for (const keyName of keyOrder(p, m, seed)) {
-      if ((cooldown.get(keyName) ?? 0) > Date.now()) continue;
+      if ((live.cooldown.get(keyName) ?? 0) > Date.now()) continue;
 
       console.log(`[ROUTER] ${body.model} -> ${routeName} (${m.provider}/${m.model}) key=${keyName}`);
+      if (!track) {
+        track = live.startRequest({
+          alias: routeName,
+          provider: m.provider,
+          model: m.model,
+          keyName,
+          startedAt: Date.now(),
+          stream: !!body.stream,
+          status: "connecting",
+        });
+      }
+
       let up: Response;
       try {
         up = await fetch(`${p.baseURL}/v1/messages`, {
@@ -294,8 +201,15 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           signal: ac.signal,
         });
       } catch (e) {
-        if (ac.signal.aborted) return;
-        cool(keyName, 15_000);
+        if (ac.signal.aborted) {
+          live.finishRequest(track.id, {
+            alias: routeName, provider: m.provider, model: m.model, key: keyName, status: 499,
+            ms: Date.now() - started, ...ZERO(), cost: 0,
+          });
+          return;
+        }
+        live.cool(keyName, 15_000);
+        live.setFailover(track.id, { from: keyName, status: 0, reason: `unreachable: ${(e as Error).message}` });
         lastStatus = 502;
         lastText = JSON.stringify({ type: "error", error: { type: "api_error", message: `Upstream unreachable: ${(e as Error).message}` } });
         continue;
@@ -305,19 +219,50 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         const retryAfter = Number(up.headers.get("retry-after")) * 1000;
         const ms = up.status === 429 ? Math.min(retryAfter || 60_000, 300_000)
           : up.status >= 500 ? 15_000 : 600_000;
-        cool(keyName, ms);
+        live.cool(keyName, ms);
         lastStatus = up.status;
         lastText = await up.text();
+        live.setFailover(track.id, { from: keyName, status: up.status, reason: `${up.status} on ${keyName}` });
         console.warn(`[ROUTER] ${keyName} -> ${up.status}, cooling ${Math.round(ms / 1000)}s, trying next`);
         continue;
       }
 
-      return relay(up, res, body, routeName, m, keyName, started);
+      return relay(up, res, body, routeName, m, keyName, started, track);
+    }
+
+    // Every key for this route failed; close the tracked request before moving on.
+    if (track) {
+      live.finishRequest(track.id, {
+        alias: routeName, provider: m.provider, model: m.model, key: track.keyName, status: lastStatus,
+        ms: Date.now() - started, ...ZERO(), cost: 0,
+      });
     }
   }
 
   res.writeHead(lastStatus, { "content-type": "application/json" });
   res.end(lastText);
+}
+
+// ---------- UI ----------
+const UI_CANDIDATES = [
+  path.join(__dirname, "ui", "index.html"),       // dist/ui/index.html (after npm run build)
+  path.join(ROOT, "src", "ui", "index.html"),    // source fallback
+];
+
+function uiFile(): string | undefined {
+  return UI_CANDIDATES.find((f) => fs.existsSync(f));
+}
+
+function serveUI(res: ServerResponse): void {
+  const file = uiFile();
+  if (!file) return fail(res, 404, "not_found_error", "UI not built. Run: npm run build");
+  const html = fs.readFileSync(file, "utf8");
+  res.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'",
+  });
+  res.end(html);
 }
 
 // ---------- server ----------
@@ -327,7 +272,40 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname.replace(/\/+$/, "") || "/";
 
     if (req.method === "GET" && p === "/health") return sendJSON(res, 200, { status: "ok" });
+
+    // UI shell: no secrets inside it, so it loads before the key prompt.
+    if (req.method === "GET" && (p === "/ui" || p === "/ui/index.html")) {
+      if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
+      return serveUI(res);
+    }
+
     if (!authed(req)) return fail(res, 401, "authentication_error", "Invalid router key");
+    if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
+    const stateChanging = req.method !== "GET" && req.method !== "HEAD";
+    if (stateChanging && !originAllowed(req)) {
+      return fail(res, 403, "forbidden_error", "Cross-origin request refused");
+    }
+
+    if (p === "/admin/status") {
+      const c = getCfg();
+      return sendJSON(res, 200, {
+        providers: Object.fromEntries(Object.entries(c.providers).map(([n, pr]) => [n, pr.keys.map((k) => ({
+          key: k, configured: !!process.env[k],
+          coolingSeconds: Math.max(0, Math.round(((live.cooldown.get(k) ?? 0) - Date.now()) / 1000)),
+        }))])),
+        models: c.models,
+      });
+    }
+
+    if (p === "/admin/usage") {
+      return sendJSON(res, 200, Object.fromEntries(totals));
+    }
+
+    if (p === "/admin" || p.startsWith("/admin/")) {
+      const handled = await handleAdmin(req, res, p, req.method ?? "GET");
+      if (!handled) fail(res, 404, "not_found_error", "Unknown admin endpoint");
+      return;
+    }
 
     // Claude Code calls /v1/messages?beta=true - match on pathname, not the raw URL.
     if (req.method === "POST" && (p === "/v1/messages" || p === "/messages")) {
@@ -354,10 +332,14 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, {
         providers: Object.fromEntries(Object.entries(c.providers).map(([n, pr]) => [n, pr.keys.map((k) => ({
           key: k, configured: !!process.env[k],
-          coolingSeconds: Math.max(0, Math.round(((cooldown.get(k) ?? 0) - Date.now()) / 1000)),
+          coolingSeconds: Math.max(0, Math.round(((live.cooldown.get(k) ?? 0) - Date.now()) / 1000)),
         }))])),
         models: c.models,
       });
+    }
+
+    if (req.method === "GET" && p === "/admin/usage") {
+      return sendJSON(res, 200, Object.fromEntries(totals));
     }
 
     if (req.method === "GET" && p === "/admin/usage") {
@@ -377,8 +359,8 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`\nClaude Router v2  ->  http://127.0.0.1:${PORT}\n${"-".repeat(40)}`);
   for (const [name, m] of Object.entries(c.models)) {
     const p = c.providers[m.provider];
-    const ok = !p ? "NO PROVIDER" : keyOrder(p, m, "x").length ? "ok" : "NO KEY";
+    const ok = !p ? "NO PROVIDER" : p.disabled ? "DISABLED" : keyOrder(p, m, "x").length ? "ok" : "NO KEY";
     console.log(`  ${name.padEnd(10)} ${m.provider}/${m.model}  [${ok}]`);
   }
-  console.log("");
+  console.log(`\n  UI (needs ROUTER_KEY):  http://127.0.0.1:${PORT}/ui\n`);
 });

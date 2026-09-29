@@ -12,3 +12,6 @@ logs/
 .claude/settings.local.json
 .claude/tasks/eod/
 
+
+# admin UI
+backups/

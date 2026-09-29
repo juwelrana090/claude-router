@@ -4,11 +4,13 @@
   "description": "Local multi-provider router for Claude Code (model name -> provider + key pool + fallback)",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-ui.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "check": "tsc --noEmit",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "npm run -s build && node scripts/smoke.mjs",
+    "smoke:admin": "npm run -s build && node scripts/admin-smoke.mjs",
+    "smoke:all": "npm run -s smoke && npm run -s smoke:admin"
   },
   "license": "ISC",
   "type": "commonjs",
