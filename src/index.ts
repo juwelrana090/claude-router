@@ -6,6 +6,7 @@ import { once } from "node:events";
 
 import { Config, ModelCfg, PORT, ProviderCfg, ROOT, ROUTER_KEY, getCfg } from "./config";
 import { handleAdmin, hostAllowed, originAllowed } from "./admin";
+import * as eta from "./eta";
 import * as live from "./live";
 import { buildBody, buildHeaders, keyOrder, resolveAlias } from "./routing";
 
@@ -71,16 +72,43 @@ function sniffSSE(event: string, u: UsageTotals): void {
   }
 }
 
+// Timing fields for the usage log (all optional; old lines keep the old shape).
+interface Timing {
+  sessionId?: string | null;
+  startedAt?: number;
+  firstTokenAt?: number | null;
+  ttftMs?: number | null;
+  durationMs?: number;
+  outputTokensPerSec?: number | null;
+}
+
 function record(
-  alias: string, m: ModelCfg, keyName: string, u: UsageTotals, status: number, ms: number
+  alias: string, m: ModelCfg, keyName: string, u: UsageTotals, status: number, ms: number, timing?: Timing
 ): void {
   const p = m.price;
   const cost = p ? (u.in * p.in + u.out * p.out + u.cacheRead * (p.cacheRead ?? p.in)) / 1e6 : 0;
   const t = totals.get(alias) ?? { ...ZERO(), requests: 0, cost: 0 };
   t.requests++; t.in += u.in; t.out += u.out; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite; t.cost += cost;
   totals.set(alias, t);
-  const line = { ts: new Date().toISOString(), alias, provider: m.provider, model: m.model, key: keyName, status, ms, ...u, cost };
-  try { fs.appendFileSync(path.join(ROOT, "logs", "usage.jsonl"), JSON.stringify(line) + "\n"); } catch { /* ignore */ }
+  const line = {
+    ts: new Date().toISOString(), alias, provider: m.provider, model: m.model, key: keyName, status, ms, ...u, cost,
+    sessionId: timing?.sessionId ?? null,
+    startedAt: timing?.startedAt ? new Date(timing.startedAt).toISOString() : null,
+    firstTokenAt: timing?.firstTokenAt ? new Date(timing.firstTokenAt).toISOString() : null,
+    durationMs: timing?.durationMs ?? ms,
+    ttftMs: timing?.ttftMs ?? null,
+    outputTokensPerSec: timing?.outputTokensPerSec ?? null,
+  };
+  try {
+    fs.appendFileSync(path.join(ROOT, "logs", "usage.jsonl"), JSON.stringify(line) + "\n");
+    eta.feedHistory(m.provider, m.model, {
+      status, out: u.out, ttftMs: timing?.ttftMs ?? null, outputTokensPerSec: timing?.outputTokensPerSec ?? null,
+    });
+    eta.sessionBump({
+      sessionId: timing?.sessionId ?? null, provider: m.provider, model: m.model,
+      in: u.in, out: u.out, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, cost, ms, status, ts: Date.now(),
+    });
+  } catch { /* ignore */ }
   console.log(
     `[USAGE] ${alias} via ${keyName} ${status} ${ms}ms in=${u.in} out=${u.out} cacheR=${u.cacheRead} cacheW=${u.cacheWrite}`
   );
@@ -97,7 +125,9 @@ async function relay(
   if (ct) res.setHeader("content-type", ct);
   res.setHeader("x-router-route", `${m.provider}/${m.model}`);
 
-  if (body.stream && up.body) {
+  const streamed = !!(body.stream && up.body);
+  let firstTokenAt = 0;
+  if (streamed) {
     res.setHeader("cache-control", "no-cache");
     res.flushHeaders();
     live.markStreaming(track?.id ?? "");
@@ -105,28 +135,57 @@ async function relay(
     let buf = "";
     try {
       for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
+        if (!firstTokenAt) {
+          firstTokenAt = Date.now();
+          eta.firstToken(track?.id ?? "");
+        }
         if (!res.write(chunk)) await once(res, "drain");
         buf += dec.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
         let i: number;
         while ((i = buf.indexOf("\n\n")) !== -1) {
           sniffSSE(buf.slice(0, i), u);
+          eta.noteOutput(track?.id ?? "", u.out);
           buf = buf.slice(i + 2);
         }
       }
     } catch (e) {
+      eta.markError(track?.id ?? "");
       if (!res.writableEnded) console.warn("[ROUTER] stream interrupted:", (e as Error).message);
     }
     res.end();
   } else {
     const text = await up.text();
+    firstTokenAt = Date.now();
     try { mergeUsage(u, JSON.parse(text).usage); } catch { /* not JSON */ }
     res.end(text);
   }
-  record(alias, m, keyName, u, up.status, Date.now() - started);
+  const endedAt = Date.now();
+  const durationMs = endedAt - started;
+  // Streaming has a real TTFT; without a stream the client-observed truth is that
+  // the whole body arrived at once (firstTokenAt === endedAt, ttftMs === durationMs).
+  const ttftMs = streamed ? (firstTokenAt ? firstTokenAt - started : null) : durationMs > 0 ? durationMs : null;
+  const outputTokensPerSec = u.out > 0 && durationMs > 0
+    ? Math.round(
+        (u.out / (streamed && firstTokenAt && endedAt > firstTokenAt
+          ? (endedAt - firstTokenAt) / 1000
+          : durationMs / 1000)) * 100
+      ) / 100
+    : null;
+  const timing: Timing = {
+    sessionId: track?.sessionId ?? null,
+    startedAt: started,
+    firstTokenAt: streamed ? (firstTokenAt || null) : endedAt,
+    ttftMs,
+    durationMs,
+    outputTokensPerSec,
+  };
+  record(alias, m, keyName, u, up.status, durationMs, timing);
   if (track) {
     live.finishRequest(track.id, {
       alias, provider: m.provider, model: m.model, key: keyName, status: up.status,
-      ms: Date.now() - started, ...u, cost: costOf(m, u),
+      ms: durationMs, ...u, cost: costOf(m, u),
+      sessionId: track.sessionId ?? null, startedAt: started,
+      firstTokenAt: timing.firstTokenAt, ttftMs, durationMs, outputTokensPerSec,
     });
   }
 }
@@ -155,6 +214,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
 
   const meta = body.metadata as { user_id?: string } | undefined;
   const seed = String(meta?.user_id ?? JSON.stringify(body.system ?? "").slice(0, 4000));
+  const sessionId = "u-" + crypto.createHash("sha1").update(seed).digest("hex").slice(0, 12);
   const chain = [alias, ...(c.models[alias].fallback ?? [])].filter((n) => c.models[n]);
 
   const ac = new AbortController();
@@ -189,7 +249,11 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           startedAt: Date.now(),
           stream: !!body.stream,
           status: "connecting",
+          sessionId,
+          maxTokens: Number(body.max_tokens) || 0,
+          clientStartedAt: started,
         });
+        eta.begin(track);
       }
 
       let up: Response;
@@ -204,7 +268,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         if (ac.signal.aborted) {
           live.finishRequest(track.id, {
             alias: routeName, provider: m.provider, model: m.model, key: keyName, status: 499,
-            ms: Date.now() - started, ...ZERO(), cost: 0,
+            ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
           });
           return;
         }
@@ -234,7 +298,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     if (track) {
       live.finishRequest(track.id, {
         alias: routeName, provider: m.provider, model: m.model, key: track.keyName, status: lastStatus,
-        ms: Date.now() - started, ...ZERO(), cost: 0,
+        ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
       });
     }
   }
@@ -354,6 +418,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.requestTimeout = 0; // long streaming responses must not be cut
+try { eta.seedHistory(); } catch { /* unreadable log -> empty history, "estimating..." */ }
 server.listen(PORT, "127.0.0.1", () => {
   const c = getCfg();
   console.log(`\nClaude Router v2  ->  http://127.0.0.1:${PORT}\n${"-".repeat(40)}`);

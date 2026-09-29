@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "node \"/absolute/path/to/claude-router/scripts/statusline.mjs\""
+  },
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:21450",
     "ANTHROPIC_AUTH_TOKEN": "<same value as ROUTER_KEY in the router .env>",

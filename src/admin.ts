@@ -14,6 +14,7 @@ import {
   lastUsedKey, lastUsedProvider, providerRollup, recent, resetCooldown, rollup, sseClientCount,
 } from "./live";
 import { buildHeaders, keyOrder } from "./routing";
+import * as eta from "./eta";
 
 const LOG_FILE = path.join(process.env.ROUTER_HOME ?? path.resolve(__dirname, ".."), "logs", "usage.jsonl");
 
@@ -155,6 +156,7 @@ export function snapshot() {
     cooldowns: Object.fromEntries(
       [...new Set(Object.values(c.providers).flatMap((p) => p.keys))].map((k) => [k, cooldownLeft(k)])
     ),
+    session: eta.activeSession(),
     sseClients: sseClientCount(),
     routesFile: ROUTES_FILE,
     envFile: ENV_FILE,
@@ -204,6 +206,7 @@ const RANGES: Record<string, { ms: number; bucket: number; label: string }> = {
   "1h": { ms: 3_600_000, bucket: 5 * 60_000, label: "5 min" },
   "24h": { ms: 86_400_000, bucket: 60 * 60_000, label: "1 hour" },
   "7d": { ms: 7 * 86_400_000, bucket: 6 * 60 * 60_000, label: "6 hours" },
+  "30d": { ms: 30 * 86_400_000, bucket: 24 * 60 * 60_000, label: "1 day" },
 };
 
 interface Agg {
@@ -214,9 +217,16 @@ interface Agg {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  msSum: number;
+  timed: number;
+  tpsSum: number;
+  tpsCount: number;
 }
 
-const newAgg = (): Agg => ({ requests: 0, errors: 0, in: 0, out: 0, cacheRead: 0, cacheWrite: 0, cost: 0 });
+const newAgg = (): Agg => ({
+  requests: 0, errors: 0, in: 0, out: 0, cacheRead: 0, cacheWrite: 0, cost: 0,
+  msSum: 0, timed: 0, tpsSum: 0, tpsCount: 0,
+});
 
 function addTo(a: Agg, line: any, cost: number): void {
   a.requests++;
@@ -226,7 +236,22 @@ function addTo(a: Agg, line: any, cost: number): void {
   a.cacheRead += Number(line.cacheRead) || 0;
   a.cacheWrite += Number(line.cacheWrite) || 0;
   a.cost += cost;
+  const ms = Number(line.durationMs ?? line.ms) || 0; // legacy lines fall back to ms
+  if (ms > 0) {
+    a.msSum += ms;
+    a.timed++;
+  }
+  const tps = Number(line.outputTokensPerSec) || 0; // old data dilutes nothing with zeros
+  if (tps > 0) {
+    a.tpsSum += tps;
+    a.tpsCount++;
+  }
 }
+
+const timingOf = (a: Agg) => ({
+  avgMs: a.timed ? Math.round(a.msSum / a.timed) : 0,
+  avgTokensPerSec: a.tpsCount ? Math.round((a.tpsSum / a.tpsCount) * 10) / 10 : 0,
+});
 
 function finishAgg(a: Agg) {
   const denom = a.in + a.cacheRead + a.cacheWrite;
@@ -235,6 +260,7 @@ function finishAgg(a: Agg) {
     cacheHitRatio: denom ? a.cacheRead / denom : 0,
     errorRate: a.requests ? a.errors / a.requests : 0,
     cost: Math.round(a.cost * 1e6) / 1e6,
+    ...timingOf(a),
   };
 }
 
@@ -246,6 +272,8 @@ async function usageSummary(range: string) {
   const byAlias = new Map<string, Agg>();
   const byProvider = new Map<string, Agg>();
   const timeline = new Map<number, Agg>();
+  const daily = new Map<string, Agg>();
+  const monthly = new Map<string, Agg>();
   const top: { ts: number; alias: string; provider: string; model: string; in: number; out: number; cost: number }[] = [];
 
   if (!fs.existsSync(LOG_FILE)) {
@@ -256,6 +284,8 @@ async function usageSummary(range: string) {
       byAlias: [],
       byProvider: [],
       timeline: [],
+      daily: [],
+      monthly: [],
       top: [],
       corruptLines: 0,
       logFile: LOG_FILE,
@@ -294,6 +324,14 @@ async function usageSummary(range: string) {
     const b = Math.floor(ts / spec.bucket) * spec.bucket;
     addTo(timeline.get(b) ?? (timeline.set(b, newAgg()).get(b)!), rec, cost);
 
+    // Per-day and per-month rollups (provider x alias) inside the selected range.
+    const day = new Date(ts).toISOString().slice(0, 10);
+    const model = rec.model ?? "";
+    const dKey = `${day}\u0000${prov}\u0000${rec.alias}\u0000${model}`;
+    addTo(daily.get(dKey) ?? (daily.set(dKey, newAgg()).get(dKey)!), rec, cost);
+    const mKey = `${day.slice(0, 7)}\u0000${prov}\u0000${rec.alias}\u0000${model}`;
+    addTo(monthly.get(mKey) ?? (monthly.set(mKey, newAgg()).get(mKey)!), rec, cost);
+
     if ((Number(rec.in) || 0) + (Number(rec.out) || 0) > 0) {
       top.push({
         ts,
@@ -316,6 +354,10 @@ async function usageSummary(range: string) {
     total.cacheRead += a.cacheRead;
     total.cacheWrite += a.cacheWrite;
     total.cost += a.cost;
+    total.msSum += a.msSum;
+    total.timed += a.timed;
+    total.tpsSum += a.tpsSum;
+    total.tpsCount += a.tpsCount;
   }
 
   return {
@@ -331,6 +373,18 @@ async function usageSummary(range: string) {
     timeline: [...timeline.entries()]
       .sort(([a], [b]) => a - b)
       .map(([ts, a]) => ({ ts, requests: a.requests, in: a.in, out: a.out, cost: Math.round(a.cost * 1e6) / 1e6 })),
+    daily: [...daily.entries()]
+      .map(([k, a]) => {
+        const [day, provider, alias, model] = k.split("\u0000");
+        return { day, provider, alias, model, requests: a.requests, ...timingOf(a) };
+      })
+      .sort((x, y) => (x.day < y.day ? -1 : x.day > y.day ? 1 : y.requests - x.requests)),
+    monthly: [...monthly.entries()]
+      .map(([k, a]) => {
+        const [month, provider, alias, model] = k.split("\u0000");
+        return { month, provider, alias, model, requests: a.requests, ...timingOf(a) };
+      })
+      .sort((x, y) => (x.month < y.month ? -1 : x.month > y.month ? 1 : y.requests - x.requests)),
     top: top.sort((a, b) => b.in + b.out - (a.in + a.out)).slice(0, 10),
     corruptLines: corrupt,
     logFile: LOG_FILE,
@@ -368,6 +422,9 @@ const on = (method: string, pattern: RegExp, handler: Handler): void => {
 
 // ---- snapshot + events ----
 on("GET", /^\/admin\/snapshot$/, (_req, res) => sendJSON(res, 200, snapshot()));
+
+// Live task time / ETA: running requests + the active session (statusline + UI).
+on("GET", /^\/admin\/eta$/, (_req, res) => sendJSON(res, 200, eta.etaSnapshot()));
 
 on("GET", /^\/admin\/events$/, async (req, res) => {
   if (sseClientCount() >= MAX_SSE_CLIENTS) {

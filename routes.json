@@ -7,19 +7,98 @@
     "haiku": "ds-flash"
   },
   "providers": {
-    "deepseek":   { "baseURL": "https://api.deepseek.com/anthropic", "auth": "both",      "keys": ["DEEPSEEK_KEY_1", "DEEPSEEK_KEY_2"] },
-    "zai":        { "baseURL": "https://api.z.ai/api/anthropic",     "auth": "both",      "keys": ["ZAI_KEY_1", "ZAI_KEY_2"] },
-    "openrouter": { "baseURL": "https://openrouter.ai/api",          "auth": "bearer",    "keys": ["OPENROUTER_KEY_1", "OPENROUTER_KEY_2", "OPENROUTER_KEY_3"] },
-    "opencode":   { "baseURL": "https://opencode.ai/zen",            "auth": "both",      "keys": ["OPENCODE_KEY_1"] }
+    "deepseek": {
+      "baseURL": "https://api.deepseek.com/anthropic",
+      "auth": "both",
+      "keys": [
+        "DEEPSEEK_KEY_1",
+        "DEEPSEEK_KEY_2"
+      ]
+    },
+    "zai": {
+      "baseURL": "https://api.z.ai/api/anthropic",
+      "auth": "both",
+      "keys": [
+        "ZAI_KEY_1",
+        "ZAI_KEY_2"
+      ]
+    },
+    "openrouter": {
+      "baseURL": "https://openrouter.ai/api",
+      "auth": "bearer",
+      "keys": [
+        "OPENROUTER_KEY_1",
+        "OPENROUTER_KEY_2",
+        "OPENROUTER_KEY_3"
+      ]
+    },
+    "opencode": {
+      "baseURL": "https://opencode.ai/inference/anthropic",
+      "auth": "both",
+      "keys": [
+        "OPENCODE_KEY_1"
+      ]
+    }
   },
   "models": {
-    "ds-pro":   { "provider": "deepseek",   "model": "deepseek-v4-pro",   "maxOutputTokens": 32000, "fallback": ["glm"] },
-    "ds-flash": { "provider": "deepseek",   "model": "deepseek-v4-flash", "maxOutputTokens": 32000 },
-    "glm":      { "provider": "zai",        "model": "glm-5.1",           "maxOutputTokens": 32000, "fallback": ["ds-pro"] },
-    "glm-fast": { "provider": "zai",        "model": "glm-4.5-air",       "maxOutputTokens": 16000 },
-    "or-a":     { "provider": "openrouter", "model": "anthropic/claude-sonnet-4.5", "key": "OPENROUTER_KEY_1" },
-    "or-b":     { "provider": "openrouter", "model": "moonshotai/kimi-k2",          "key": "OPENROUTER_KEY_2" },
-    "or-c":     { "provider": "openrouter", "model": "qwen/qwen3-coder",            "key": "OPENROUTER_KEY_3" },
-    "oc-free":  { "provider": "opencode",   "model": "big-pickle" }
+    "ds-pro": {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "key": "DEEPSEEK_KEY_1",
+      "maxOutputTokens": 32000,
+      "fallback": [
+        "ds-flash"
+      ]
+    },
+    "ds-flash": {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "key": "DEEPSEEK_KEY_1",
+      "maxOutputTokens": 32000
+    },
+    "glm": {
+      "provider": "zai",
+      "model": "glm-5.3",
+      "key": "ZAI_KEY_1",
+      "maxOutputTokens": 32000,
+      "fallback": [
+        "ds-flash"
+      ]
+    },
+    "glm-fast": {
+      "provider": "zai",
+      "model": "glm-5.3-flash",
+      "key": "ZAI_KEY_1",
+      "maxOutputTokens": 16000,
+      "fallback": [
+        "glm"
+      ]
+    },
+    "or-a": {
+      "provider": "openrouter",
+      "model": "qwen/qwen3.8-27b:free",
+      "key": "OPENROUTER_KEY_1",
+      "fallback": [
+        "glm-fast"
+      ]
+    },
+    "or-b": {
+      "provider": "openrouter",
+      "model": "openrouter/free",
+      "key": "OPENROUTER_KEY_1"
+    },
+    "or-c": {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "key": "OPENROUTER_KEY_1",
+      "fallback": [
+        "glm-fast"
+      ]
+    },
+    "oc-haiku": {
+      "provider": "opencode",
+      "model": "claude-haiku-4-5",
+      "key": "OPENCODE_KEY_1"
+    }
   }
 }

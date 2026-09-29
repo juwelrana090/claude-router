@@ -1,9 +1,71 @@
-node_modules/
-.env
-dist/
-logs/
-*.log
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+dist
+tmp
+out-tsc
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
 .DS_Store
+Thumbs.db
+
+.claude/worktrees
+
+# Ignore local environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.*
+
+
+# Ignore log files
+*.log
+logs
+*.log.*
+logs/*
+
+# Ignore all type of compressed files
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+*.tgz
+*.tar.xz
+*.tar.bz2
 
 # ─────────────────────────────────────────────────────
 # Claude AI Memory System
@@ -12,6 +74,10 @@ logs/
 .claude/settings.local.json
 .claude/tasks/eod/
 
+# Package manager lockfiles — use only package-lock.json (npm)
+pnpm-lock.yaml
+bun.lock
+yarn.lock
 
 # admin UI
 backups/

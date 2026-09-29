@@ -10,6 +10,16 @@ export interface InFlight {
   stream: boolean;
   status: "connecting" | "streaming";
   failover?: { from: string; status: number; reason: string };
+  // ---- live task time / eta (all optional so existing constructors stay safe) ----
+  sessionId?: string | null;
+  maxTokens?: number;
+  clientStartedAt?: number;
+  firstTokenAt?: number | null;
+  outSoFar?: number;
+  tokensPerSec?: number | null;
+  etaMs?: number | null;
+  expectedOutputTokens?: number | null;
+  streamError?: boolean;
 }
 
 export interface RecentEntry {
@@ -26,6 +36,13 @@ export interface RecentEntry {
   cacheWrite: number;
   cost: number;
   failover?: { from: string; status: number; reason: string };
+  // ---- live task time / eta ----
+  sessionId?: string | null;
+  startedAt?: number;
+  firstTokenAt?: number | null;
+  ttftMs?: number | null;
+  durationMs?: number;
+  outputTokensPerSec?: number | null;
 }
 
 // ---------- cooldowns (key env name -> epoch ms when it frees up) ----------
@@ -181,6 +198,28 @@ export function finishRequest(id: string, entry: Omit<RecentEntry, "ts" | "failo
       in: full.in,
       out: full.out,
     }, full.provider);
+    // Final `eta` frame: total time is authoritative here, etaMs is always null.
+    const t0 = f?.clientStartedAt ?? f?.startedAt ?? full.startedAt ?? full.ts - (full.durationMs ?? full.ms);
+    const elapsedMs = full.durationMs ?? full.ms;
+    broadcast("eta", {
+      requestId: id,
+      sessionId: full.sessionId ?? null,
+      alias: full.alias,
+      provider: full.provider,
+      model: full.model,
+      status: full.status >= 400 || f?.streamError ? "error" : "done",
+      startedAt: t0,
+      elapsedMs,
+      durationMs: elapsedMs,
+      firstTokenAt: full.firstTokenAt ?? f?.firstTokenAt ?? null,
+      ttftMs: full.ttftMs ?? null,
+      etaMs: null,
+      expectedOutputTokens: f?.expectedOutputTokens ?? null,
+      outputTokensSoFar: full.out,
+      tokensPerSec: full.outputTokensPerSec
+        ?? (full.ms > 0 && full.out > 0 ? Math.round((full.out / (full.ms / 1000)) * 100) / 100 : null),
+      failover: full.failover ?? null,
+    });
     broadcast("finish", full);
   });
 }
