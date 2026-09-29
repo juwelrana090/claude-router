@@ -373,9 +373,36 @@ function serveUI(res: ServerResponse): void {
   res.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'",
+    "content-security-policy":
+      "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'",
   });
   res.end(html);
+}
+
+// ---------- static assets (icons/logo copied from src/web/public by the Vite build) ----------
+const STATIC_MIME: Record<string, string> = {
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+};
+
+function serveStaticAsset(res: ServerResponse, pathname: string): boolean {
+  const ext = path.extname(pathname);
+  const mime = STATIC_MIME[ext];
+  if (!mime) return false;
+  // Only whitelisted brand assets should ever live here; refuse traversal defensively.
+  if (pathname.includes("..")) return false;
+  const uiDir = path.join(__dirname, "ui");
+  const filePath = path.join(uiDir, pathname);
+  if (!filePath.startsWith(uiDir + path.sep)) return false;
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+  res.writeHead(200, {
+    "content-type": mime,
+    "cache-control": "public, max-age=86400",
+    "content-security-policy": "default-src 'none'",
+  });
+  res.end(fs.readFileSync(filePath));
+  return true;
 }
 
 // ---------- server ----------
@@ -390,6 +417,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && (p === "/ui" || p === "/ui/index.html")) {
       if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
       return serveUI(res);
+    }
+
+    // Static brand assets (icons, logo) copied into dist/ui/ by `npm run build`.
+    if (req.method === "GET" && (p.startsWith("/icons/") || p === "/logo.png" || p === "/logo.svg")) {
+      if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
+      if (serveStaticAsset(res, p)) return;
+      return fail(res, 404, "not_found_error", "Not found");
     }
 
     if (!authed(req)) return fail(res, 401, "authentication_error", "Invalid router key");
@@ -438,25 +472,6 @@ const server = http.createServer(async (req, res) => {
         data: Object.keys(c.models).map((id) => ({ type: "model", id, display_name: id, created_at: "2025-01-01T00:00:00Z" })),
         has_more: false,
       });
-    }
-
-    if (req.method === "GET" && p === "/admin/status") {
-      const c = getCfg();
-      return sendJSON(res, 200, {
-        providers: Object.fromEntries(Object.entries(c.providers).map(([n, pr]) => [n, pr.keys.map((k) => ({
-          key: k, configured: !!process.env[k],
-          coolingSeconds: Math.max(0, Math.round(((live.cooldown.get(k) ?? 0) - Date.now()) / 1000)),
-        }))])),
-        models: c.models,
-      });
-    }
-
-    if (req.method === "GET" && p === "/admin/usage") {
-      return sendJSON(res, 200, Object.fromEntries(totals));
-    }
-
-    if (req.method === "GET" && p === "/admin/usage") {
-      return sendJSON(res, 200, Object.fromEntries(totals));
     }
 
     fail(res, 404, "not_found_error", "Not found");

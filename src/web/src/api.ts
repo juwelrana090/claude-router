@@ -56,11 +56,21 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
   unauthorizedHandler = handler;
 }
 
+let pendingAsk: Promise<string | null> | null = null;
+
 async function askForKey(): Promise<string | null> {
+  if (pendingAsk) return pendingAsk;
   clearRouterKey();
-  const next = await unauthorizedHandler();
-  if (next) setRouterKey(next);
-  return next;
+  pendingAsk = (async () => {
+    try {
+      const next = await unauthorizedHandler();
+      if (next) setRouterKey(next);
+      return next;
+    } finally {
+      pendingAsk = null;
+    }
+  })();
+  return pendingAsk;
 }
 
 // ---------- Fetch helper ----------
@@ -93,7 +103,19 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     throw new ApiError(401, `Unauthorized: ${init.method ?? 'GET'} ${path}`);
   }
   if (!res.ok) {
-    throw new ApiError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status} ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      const fieldMsgs = Array.isArray(data?.errors)
+        ? data.errors
+            .map((e: { field: string; message: string }) => `${e.field}: ${e.message}`)
+            .join('; ')
+        : '';
+      detail = fieldMsgs || data?.error?.message || detail;
+    } catch {
+      // body wasn't JSON (e.g. a raw 404 from a proxy) — keep the generic status line
+    }
+    throw new ApiError(res.status, `${init.method ?? 'GET'} ${path} failed: ${res.status} ${detail}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

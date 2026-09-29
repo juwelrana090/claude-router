@@ -6,7 +6,7 @@ export default defineConfig({
   base: './',
   plugins: [react(), viteSingleFile()],
   build: {
-    outDir: '../dist/ui',
+    outDir: '../../dist/ui',
     emptyOutDir: true,
   },
   server: {

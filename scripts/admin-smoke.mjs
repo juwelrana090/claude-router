@@ -141,11 +141,13 @@ t("401 on DELETE without key", (await fetch(R + "/admin/models/a", { method: "DE
   t("UI shell served without key", r.status === 200);
   // The inlined vendor bundle contains markup-like literals, so the markup-level
   // checks run on the HTML with inline (src-less) script bodies stripped; the
-  // code-level fetch/@import checks still scan the full text.
+  // code-level fetch/@import checks still scan the full text. The @import pattern
+  // requires CSS at-rule syntax (`@import url(` or `@import "..."`) so vendor
+  // string constants like stylis' at-rule names don't trip it.
   const markup = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (tag, attrs) => (/\bsrc=/i.test(attrs) ? tag : ""));
   t("UI loads no external resources",
     !/<script[^>]+\bsrc=/i.test(markup) && !/<link[^>]+stylesheet/i.test(markup) &&
-    !/@import/i.test(html) && !/fetch\(\s*["'`]https?:/i.test(html) && !/<img/i.test(markup));
+    !/@import\s+(?:url\(|["'])/i.test(html) && !/fetch\(\s*["'`]https?:/i.test(html) && !/<img/i.test(markup));
   t("UI sets a restrictive CSP", /default-src 'none'/.test(r.headers.get("content-security-policy") || ""));
   t("UI keeps the key out of the markup", !html.includes(ROUTER_KEY));
 }

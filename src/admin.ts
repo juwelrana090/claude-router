@@ -604,6 +604,86 @@ on("POST", /^\/admin\/providers\/([^/]+)\/keys$/, async (req, res, [name]) => {
   });
 });
 
+// ---- OAuth (PKCE) key acquisition — currently only OpenRouter publishes a public,
+// no-registration flow for this. Exchanges a browser-obtained authorization code for a
+// real API key server-side (avoids exposing the exchange call to the page's CSP), then
+// stores it exactly like a manually pasted key (same commit/commitEnv path as .../keys).
+const OAUTH_TOKEN_URL: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1/auth/keys",
+};
+
+on("POST", /^\/admin\/providers\/([^/]+)\/oauth\/exchange$/, async (req, res, [name]) => {
+  const tokenUrl = OAUTH_TOKEN_URL[name];
+  if (!tokenUrl)
+    return fail(res, 400, "invalid_request_error", `Provider "${name}" has no OAuth flow`);
+  const body = await readJSONBody(req);
+  const c = getCfg();
+  const p = c.providers[name];
+  if (!p) return fail(res, 404, "not_found_error", `No provider "${name}"`);
+  const version = expectVersion(body);
+  const envName = validateEnvName(body.envName);
+  const code = body.code;
+  const codeVerifier = body.codeVerifier;
+  if (typeof code !== "string" || !code)
+    throw new ValidationError([{ field: "code", message: "is required" }]);
+  if (typeof codeVerifier !== "string" || !codeVerifier)
+    throw new ValidationError([{ field: "codeVerifier", message: "is required" }]);
+
+  let value: string;
+  try {
+    const up = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        code_verifier: codeVerifier,
+        code_challenge_method: "S256",
+      }),
+    });
+    const data: any = await up.json().catch(() => ({}));
+    const key = data?.key ?? data?.data?.key;
+    if (!up.ok || typeof key !== "string") {
+      return fail(
+        res,
+        502,
+        "api_error",
+        `${name} OAuth exchange failed: ${up.status} ${JSON.stringify(data).slice(0, 300)}`,
+      );
+    }
+    value = key;
+  } catch (e) {
+    return fail(res, 502, "api_error", `${name} OAuth exchange unreachable: ${(e as Error).message}`);
+  }
+
+  const exists = p.keys.includes(envName);
+  if (!exists && c.models) {
+    for (const [alias, m] of Object.entries(c.models)) {
+      if (m.key === envName && m.provider !== name) {
+        throw new ValidationError([
+          { field: "envName", message: `"${envName}" is pinned by model "${alias}" of provider "${m.provider}"` },
+        ]);
+      }
+    }
+  }
+  const next: Config = {
+    ...c,
+    providers: {
+      ...c.providers,
+      [name]: { ...p, keys: exists ? p.keys : [...p.keys, envName] },
+    },
+  };
+  commit(next, version);
+  commitEnv({ [envName]: value }, [], typeof body.envVersion === "string" ? body.envVersion : undefined);
+  resetCooldown(envName);
+  console.log(`[ADMIN] ${exists ? "replaced" : "added"} key ${envName} for provider ${name} via OAuth`);
+  sendJSON(res, exists ? 200 : 201, {
+    version: configVersion(),
+    envVersion: envVersion(),
+    key: keyView(envName),
+    provider: providerView(name, getCfg().providers[name]),
+  });
+});
+
 on("DELETE", /^\/admin\/providers\/([^/]+)\/keys\/([^/]+)$/, async (req, res, [name, envName]) => {
   const body = await readJSONBody(req);
   const c = getCfg();

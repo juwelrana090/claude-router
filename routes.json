@@ -33,10 +33,10 @@
       ]
     },
     "opencode": {
-      "baseURL": "https://opencode.ai/inference/anthropic",
+      "baseURL": "https://opencode.ai/zen",
       "auth": "both",
       "keys": [
-        "OPENCODE_KEY_1"
+        "OPENCODE_ZEN_KEY_1"
       ]
     }
   },
@@ -45,10 +45,7 @@
       "provider": "deepseek",
       "model": "deepseek-v4-pro",
       "key": "DEEPSEEK_KEY_1",
-      "maxOutputTokens": 32000,
-      "fallback": [
-        "ds-flash"
-      ]
+      "maxOutputTokens": 32000
     },
     "ds-flash": {
       "provider": "deepseek",
@@ -74,31 +71,24 @@
         "glm"
       ]
     },
-    "or-a": {
-      "provider": "openrouter",
-      "model": "qwen/qwen3.8-27b:free",
-      "key": "OPENROUTER_KEY_1",
-      "fallback": [
-        "glm-fast"
-      ]
-    },
     "or-b": {
       "provider": "openrouter",
       "model": "openrouter/free",
-      "key": "OPENROUTER_KEY_1"
-    },
-    "or-c": {
-      "provider": "openrouter",
-      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "key": "OPENROUTER_KEY_1",
       "fallback": [
-        "glm-fast"
+        "glm-fast",
+        "ds-flash"
       ]
     },
     "oc-haiku": {
       "provider": "opencode",
-      "model": "claude-haiku-4-5",
-      "key": "OPENCODE_KEY_1"
+      "model": "big-pickle",
+      "key": "OPENCODE_ZEN_KEY_1"
+    },
+    "oc-free": {
+      "provider": "opencode",
+      "model": "space-bunny-free",
+      "key": "OPENCODE_ZEN_KEY_1"
     }
   }
 }

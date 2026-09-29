@@ -6,6 +6,7 @@ import { ConfigProvider, theme as antdTheme } from 'antd';
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { GLOBAL_CSS, buildTheme, cssVars } from './designTokens';
 import { ThemeModeProvider, loadThemeMode, saveThemeMode, type ThemeMode } from './theme';
 
 const rootElement = document.getElementById('root');
@@ -23,12 +24,18 @@ function Root() {
       }}
     >
       <ConfigProvider
-        theme={{ algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm }}
+        theme={{
+          algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+          ...buildTheme(mode),
+        }}
       >
+        <style>{cssVars(mode) + GLOBAL_CSS}</style>
         {/* @lobehub/ui ThemeProvider must sit inside antd ConfigProvider. */}
         <ThemeProvider
           themeMode={mode}
           defaultThemeMode="dark"
+          enableCustomFonts={false}
+          theme={buildTheme(mode)}
           onThemeModeChange={(next) => {
             if (next === 'dark' || next === 'light') setMode(next);
           }}

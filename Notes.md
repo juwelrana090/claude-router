@@ -98,7 +98,7 @@ Yes — everything actionable is done. Final accounting:
 **⏳ Waiting on you (3 things)**
 
 1. **Restart the router** — the running process predates everything: `npm run dev` or `npm start`, then open `http://127.0.0.1:21450/ui`
-2. **OpenCode key** — put a paid Console service-account key in `OPENCODE_KEY_1` in `.env` (the free tier is client-locked; no router can use it)
+2. **OpenCode Zen key** — put your OpenCode Zen key in `OPENCODE_ZEN_KEY_1` in `.env` (from the Zen dashboard; the router now calls `https://opencode.ai/zen`)
 3. **Git commit** — your `git add .` is stale (deleted files still staged, `web/` unstaged). Say the word and I'll restage + commit
 
 **💬 Offers open (say yes/no)**

@@ -63,6 +63,7 @@ import {
   Vllm,
   Volcengine,
   XAI,
+  ZAI,
   Zhipu,
 } from '@lobehub/icons';
 import { Text } from '@lobehub/ui';
@@ -214,8 +215,13 @@ const ICON_BY_PROVIDER: Record<string, IconComponent> = {
   volcengine: Volcengine,
   xai: XAI,
   grok: XAI,
+  zai: ZAI,
   zhipu: Zhipu,
   chatglm: Zhipu,
+};
+
+const STATIC_ICON_BY_PROVIDER: Record<string, string> = {
+  opencode: '/icons/opencode.svg',
 };
 
 export function ProviderIcon({ provider, size = 18 }: { provider: string; size?: number }) {
@@ -223,6 +229,18 @@ export function ProviderIcon({ provider, size = 18 }: { provider: string; size?:
   const Icon =
     ICON_BY_PROVIDER[key] ?? Object.entries(ICON_BY_PROVIDER).find(([k]) => key.includes(k))?.[1];
   if (Icon) return <Icon size={size} />;
+  const staticSrc = STATIC_ICON_BY_PROVIDER[key];
+  if (staticSrc) {
+    return (
+      <img
+        src={staticSrc}
+        width={size}
+        height={size}
+        alt={provider}
+        style={{ display: 'block', flex: 'none' }}
+      />
+    );
+  }
   return (
     <Avatar size={size} style={{ fontSize: Math.max(10, Math.round(size * 0.5)), flex: 'none' }}>
       {provider.charAt(0).toUpperCase() || '?'}
@@ -540,6 +558,40 @@ interface AddKeyFormValues {
   value: string;
 }
 
+// ---------- OAuth (PKCE) key acquisition — only OpenRouter publishes a public flow ----------
+
+const OAUTH_PROVIDERS = new Set(['openrouter']);
+const oauthVerifierKey = (name: string) => `router_oauth_verifier_${name}`;
+
+function base64url(bytes: Uint8Array): string {
+  let str = '';
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = base64url(new Uint8Array(digest));
+  return { verifier, challenge };
+}
+
+async function startOAuthAuthorize(name: string): Promise<void> {
+  const { verifier, challenge } = await pkcePair();
+  try {
+    sessionStorage.setItem(oauthVerifierKey(name), verifier);
+  } catch {
+    // Hardened privacy mode can block storage (same guard as api.ts); without the
+    // stored verifier the return trip can never finish, so abort before redirecting.
+    throw new Error('browser storage unavailable — cannot start authorization');
+  }
+  const url = new URL('https://openrouter.ai/auth');
+  url.searchParams.set('callback_url', window.location.origin + window.location.pathname);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  window.location.href = url.toString();
+}
+
 function KeysModal({
   open,
   provider,
@@ -556,6 +608,7 @@ function KeysModal({
   onClose: () => void;
 }) {
   const [form] = Form.useForm<AddKeyFormValues>();
+  const { message } = App.useApp();
 
   if (!provider) {
     return <Modal title="Keys" open={open} onCancel={onClose} footer={null} width={640} />;
@@ -668,6 +721,18 @@ function KeysModal({
               </Button>
             </Form.Item>
           </Form>
+          {OAUTH_PROVIDERS.has(provider.name) && (
+            <Button
+              style={{ marginBottom: 16 }}
+              onClick={() =>
+                startOAuthAuthorize(provider.name).catch((e) =>
+                  message.error(e instanceof Error ? e.message : 'could not start authorization'),
+                )
+              }
+            >
+              Authorize with {provider.name} instead
+            </Button>
+          )}
           <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
             Values are written straight to .env and never read back — the table shows only the last 4
             characters. Re-adding an existing env name replaces its value.
@@ -693,6 +758,43 @@ function ProvidersInner() {
   const editTarget = editorName ? (snapshot?.providers.find((p) => p.name === editorName) ?? null) : null;
   const keysTarget = keysFor ? (snapshot?.providers.find((p) => p.name === keysFor) ?? null) : null;
   const version = snapshot?.version;
+
+  // OAuth completion: openrouter redirects back to /ui?code=... — exchange it for a key.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('code');
+    if (!code || !version) return;
+    let stored: { name: string; verifier: string } | null = null;
+    try {
+      const name = [...OAUTH_PROVIDERS].find((n) => sessionStorage.getItem(oauthVerifierKey(n)));
+      const verifier = name ? sessionStorage.getItem(oauthVerifierKey(name)) : null;
+      if (name && verifier) {
+        sessionStorage.removeItem(oauthVerifierKey(name));
+        stored = { name, verifier };
+      }
+    } catch {
+      stored = null; // sessionStorage unavailable (hardened privacy mode) — same guard as api.ts
+    }
+    if (!stored) return;
+    const { name, verifier } = stored;
+    window.history.replaceState({}, '', window.location.pathname);
+    const provider = snapshot?.providers.find((p) => p.name === name);
+    // Skip past existing names: keys.length + 1 collides after any deletion, and the
+    // server would then silently replace that key's stored secret.
+    const keyPrefix = `${name.toUpperCase()}_KEY_`;
+    let suffix = (provider?.keys.length ?? 0) + 1;
+    while (provider?.keys.some((k) => k.envName === keyPrefix + suffix)) suffix++;
+    const envName = keyPrefix + suffix;
+    void act(
+      `${name} authorization`,
+      () =>
+        api(`/admin/providers/${name}/oauth/exchange`, {
+          method: 'POST',
+          body: JSON.stringify({ version, envName, code, codeVerifier: verifier }),
+        }),
+      `${name}: connected as ${envName}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, snapshot]);
 
   const testAliasFor = (p: AdminProviderView): string | undefined => p.models[0];
 

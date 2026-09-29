@@ -1,11 +1,14 @@
 {
   "name": "claude-router",
   "version": "1.0.0",
+  "private": true,
+  "workspaces": ["src/web"],
   "description": "Local multi-provider router for Claude Code (model name -> provider + key pool + fallback)",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && cd web && npm run build",
+    "build": "tsc && cd src/web && npm run build",
     "start": "node dist/index.js",
+    "serve": "npm run build && npm start",
     "dev": "npm run -s build; tsc --watch & node --watch dist/index.js & wait",
     "check": "tsc --noEmit",
     "smoke": "npm run -s build && node scripts/smoke.mjs",
