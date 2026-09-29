@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Environment variables (contains API keys — never commit)
+.env
+
+# Build output
+dist/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
