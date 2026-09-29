@@ -1067,6 +1067,7 @@
         snap.recent.push(d);
         if (snap.recent.length > 200) snap.recent.shift();
         paintLive(true);
+        paintRunWidget(); // re-pick the widget target now that this entry left
       } else if (event === "eta") {
         onEta(d);
       }
@@ -1081,6 +1082,9 @@
     function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
     function onSnapshot(s) {
+      // Polling mode never sees eta frames: remember who was running so the
+      // widget can still land on a terminal state when they leave the snapshot.
+      const wasFlying = (snap && snap.inFlight) || [];
       snap = s;
       // No in-flight entry while the last eta frame still says "running": the
       // terminal frame was lost (restart / reconnect) - close the widget out.
@@ -1088,6 +1092,37 @@
         lastEta = Object.assign({}, lastEta, {
           status: "done", durationMs: Number.isFinite(lastEta.elapsedMs) ? lastEta.elapsedMs : 0,
         });
+      }
+      // Polling mode never sees eta frames: when requests we showed as running
+      // leave the snapshot, close the widget out from snap.recent (same
+      // provider/model/key, newest match) - the newest finish wins.
+      const gone = wasFlying.filter((f) => !(s.inFlight || []).some((x) => x.id === f.id));
+      if (gone.length) {
+        const hitOf = (f) => {
+          const hits = (s.recent || []).filter((x) =>
+            x.provider === f.provider && x.model === f.model && x.key === f.keyName);
+          return hits[hits.length - 1];
+        };
+        const pick = gone.map((f) => ({ f, r: hitOf(f) }))
+          .sort((a, b) => (b.r ? b.r.ts : 0) - (a.r ? a.r.ts : 0))[0];
+        const cur = lastEta && lastEta.status !== "running" ? lastEta : null;
+        const endAt = cur ? (cur.startedAt || 0) + (cur.durationMs || 0) : 0;
+        if (!cur || (pick.r && (pick.r.ts || 0) > endAt)) {
+          const { f, r } = pick;
+          const total = r ? (r.durationMs ?? r.ms) : Math.max(0, Date.now() - (f.clientStartedAt ?? f.startedAt));
+          lastEta = {
+            requestId: f.id, sessionId: f.sessionId ?? null, alias: f.alias,
+            provider: f.provider, model: f.model,
+            status: r && r.status >= 400 ? "error" : "done",
+            startedAt: f.clientStartedAt ?? f.startedAt,
+            elapsedMs: total, durationMs: total,
+            firstTokenAt: f.firstTokenAt ?? null, ttftMs: f.ttftMs ?? null,
+            etaMs: null, expectedOutputTokens: f.expectedOutputTokens ?? null,
+            outputTokensSoFar: r ? r.out : (f.outSoFar ?? 0),
+            tokensPerSec: (r && r.outputTokensPerSec) || f.tokensPerSec || null,
+            failover: null,
+          };
+        }
       }
       paintRunWidget(); // tab-independent: header widget works in SSE and polling mode
       if (tab === "live") paintLive();
@@ -1106,13 +1141,17 @@
       // Priority 1: a live in-flight entry (snapshot / start / update frames).
       const flying = (snap && snap.inFlight) || [];
       if (flying.length) {
-        const f = flying.slice().sort((a, b) =>
+        // Prefer entries still connecting/streaming: a merged terminal eta can
+        // sit on an entry until the finish frame removes it.
+        const active = flying.filter((x) => x.status === "connecting" || x.status === "streaming");
+        const f = (active.length ? active : flying).slice().sort((a, b) =>
           (a.clientStartedAt ?? a.startedAt ?? 0) - (b.clientStartedAt ?? b.startedAt ?? 0))[0];
         return {
           status: f.status === "connecting" || f.status === "streaming" ? "running" : f.status,
           alias: f.alias, provider: f.provider, model: f.model,
           startedAt: f.clientStartedAt ?? f.startedAt, elapsedMs: f.elapsedMs,
-          etaMs: f.etaMs, tokensPerSec: f.tokensPerSec, outputTokensSoFar: f.outputTokensSoFar,
+          etaMs: f.etaMs, tokensPerSec: f.tokensPerSec,
+          outputTokensSoFar: f.outputTokensSoFar ?? f.outSoFar, // snapshots carry outSoFar
           expectedOutputTokens: f.expectedOutputTokens, firstTokenAt: f.firstTokenAt,
           durationMs: f.durationMs, ttftMs: f.ttftMs,
         };
@@ -1129,7 +1168,12 @@
       // use the freshest eta fields even before the next snapshot tick.
       if (snap) {
         const f = (snap.inFlight || []).find((x) => x.id === d.requestId);
-        if (f) Object.assign(f, d);
+        if (f) {
+          // Merge the eta fields but keep the InFlight status vocabulary
+          // ("connecting"/"streaming") that the Live tab renders verbatim.
+          const { status, ...rest } = d;
+          Object.assign(f, rest);
+        }
       }
       paintRunWidget();
     }

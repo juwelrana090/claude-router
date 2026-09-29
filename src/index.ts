@@ -80,6 +80,10 @@ interface Timing {
   ttftMs?: number | null;
   durationMs?: number;
   outputTokensPerSec?: number | null;
+  // History-ring gating only (never logged): only streaming samples carry a
+  // real ttft/tps, and a mid-stream abort is not a successful request.
+  streamed?: boolean;
+  aborted?: boolean;
 }
 
 function record(
@@ -102,7 +106,11 @@ function record(
   try {
     fs.appendFileSync(path.join(ROOT, "logs", "usage.jsonl"), JSON.stringify(line) + "\n");
     eta.feedHistory(m.provider, m.model, {
-      status, out: u.out, ttftMs: timing?.ttftMs ?? null, outputTokensPerSec: timing?.outputTokensPerSec ?? null,
+      status, out: u.out,
+      // Rings hold streaming successes only: non-streaming ttft/tps are
+      // full-duration shapes and an aborted stream is not a completed request.
+      ttftMs: timing?.streamed && !timing?.aborted ? timing?.ttftMs ?? null : null,
+      outputTokensPerSec: timing?.streamed && !timing?.aborted ? timing?.outputTokensPerSec ?? null : null,
     });
     eta.sessionBump({
       sessionId: timing?.sessionId ?? null, provider: m.provider, model: m.model,
@@ -127,66 +135,87 @@ async function relay(
 
   const streamed = !!(body.stream && up.body);
   let firstTokenAt = 0;
-  if (streamed) {
-    res.setHeader("cache-control", "no-cache");
-    res.flushHeaders();
-    live.markStreaming(track?.id ?? "");
-    const dec = new TextDecoder();
-    let buf = "";
-    try {
-      for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
-        if (!firstTokenAt) {
-          firstTokenAt = Date.now();
-          eta.firstToken(track?.id ?? "");
+  let aborted = false;
+  try {
+    if (streamed) {
+      res.setHeader("cache-control", "no-cache");
+      res.flushHeaders();
+      live.markStreaming(track?.id ?? "");
+      const dec = new TextDecoder();
+      let buf = "";
+      try {
+        for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
+          if (!firstTokenAt) {
+            firstTokenAt = Date.now();
+            eta.firstToken(track?.id ?? "");
+          }
+          if (!res.write(chunk)) {
+            // A client that vanished under backpressure never drains: race the
+            // close so the relay cannot hang here forever.
+            await Promise.race([once(res, "drain"), once(res, "close")]);
+            if (res.destroyed || res.writableEnded) throw new Error("client disconnected mid-stream");
+          }
+          buf += dec.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+          let i: number;
+          while ((i = buf.indexOf("\n\n")) !== -1) {
+            sniffSSE(buf.slice(0, i), u);
+            eta.noteOutput(track?.id ?? "", u.out);
+            buf = buf.slice(i + 2);
+          }
         }
-        if (!res.write(chunk)) await once(res, "drain");
-        buf += dec.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
-        let i: number;
-        while ((i = buf.indexOf("\n\n")) !== -1) {
-          sniffSSE(buf.slice(0, i), u);
-          eta.noteOutput(track?.id ?? "", u.out);
-          buf = buf.slice(i + 2);
-        }
+      } catch (e) {
+        aborted = true;
+        eta.markError(track?.id ?? "");
+        if (!res.writableEnded) console.warn("[ROUTER] stream interrupted:", (e as Error).message);
       }
-    } catch (e) {
-      eta.markError(track?.id ?? "");
-      if (!res.writableEnded) console.warn("[ROUTER] stream interrupted:", (e as Error).message);
+      res.end();
+    } else {
+      const text = await up.text();
+      firstTokenAt = Date.now();
+      try { mergeUsage(u, JSON.parse(text).usage); } catch { /* not JSON */ }
+      res.end(text);
     }
-    res.end();
-  } else {
-    const text = await up.text();
-    firstTokenAt = Date.now();
-    try { mergeUsage(u, JSON.parse(text).usage); } catch { /* not JSON */ }
-    res.end(text);
-  }
-  const endedAt = Date.now();
-  const durationMs = endedAt - started;
-  // Streaming has a real TTFT; without a stream the client-observed truth is that
-  // the whole body arrived at once (firstTokenAt === endedAt, ttftMs === durationMs).
-  const ttftMs = streamed ? (firstTokenAt ? firstTokenAt - started : null) : durationMs > 0 ? durationMs : null;
-  const outputTokensPerSec = u.out > 0 && durationMs > 0
-    ? Math.round(
-        (u.out / (streamed && firstTokenAt && endedAt > firstTokenAt
-          ? (endedAt - firstTokenAt) / 1000
-          : durationMs / 1000)) * 100
-      ) / 100
-    : null;
-  const timing: Timing = {
-    sessionId: track?.sessionId ?? null,
-    startedAt: started,
-    firstTokenAt: streamed ? (firstTokenAt || null) : endedAt,
-    ttftMs,
-    durationMs,
-    outputTokensPerSec,
-  };
-  record(alias, m, keyName, u, up.status, durationMs, timing);
-  if (track) {
-    live.finishRequest(track.id, {
-      alias, provider: m.provider, model: m.model, key: keyName, status: up.status,
-      ms: durationMs, ...u, cost: costOf(m, u),
-      sessionId: track.sessionId ?? null, startedAt: started,
-      firstTokenAt: timing.firstTokenAt, ttftMs, durationMs, outputTokensPerSec,
-    });
+    const endedAt = Date.now();
+    const durationMs = endedAt - started;
+    // Streaming has a real TTFT; without a stream the client-observed truth is that
+    // the whole body arrived at once (firstTokenAt === endedAt, ttftMs === durationMs).
+    const ttftMs = streamed ? (firstTokenAt ? firstTokenAt - started : null) : durationMs > 0 ? durationMs : null;
+    const outputTokensPerSec = u.out > 0 && durationMs > 0
+      ? Math.round(
+          (u.out / (streamed && firstTokenAt && endedAt > firstTokenAt
+            ? (endedAt - firstTokenAt) / 1000
+            : durationMs / 1000)) * 100
+        ) / 100
+      : null;
+    const timing: Timing = {
+      sessionId: track?.sessionId ?? null,
+      startedAt: started,
+      firstTokenAt: streamed ? (firstTokenAt || null) : endedAt,
+      ttftMs,
+      durationMs,
+      outputTokensPerSec,
+      streamed,
+      aborted,
+    };
+    record(alias, m, keyName, u, up.status, durationMs, timing);
+    if (track) {
+      live.finishRequest(track.id, {
+        alias, provider: m.provider, model: m.model, key: keyName, status: up.status,
+        ms: durationMs, ...u, cost: costOf(m, u),
+        sessionId: track.sessionId ?? null, startedAt: started,
+        firstTokenAt: timing.firstTokenAt, ttftMs, durationMs, outputTokensPerSec,
+      });
+    }
+  } finally {
+    // A relay that throws (e.g. the upstream body died mid-read) must still
+    // release the in-flight entry, or the eta ticker broadcasts a phantom run.
+    if (track && live.inFlight.has(track.id)) {
+      live.finishRequest(track.id, {
+        alias, provider: m.provider, model: m.model, key: keyName, status: 502,
+        ms: Date.now() - started, ...ZERO(), cost: 0,
+        sessionId: track.sessionId ?? null, startedAt: started,
+      });
+    }
   }
 }
 
@@ -226,6 +255,10 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     error: { type: "api_error", message: "No usable upstream key (missing or cooling down)" },
   });
 
+  // One tracked request for the whole chain: failovers keep the same requestId
+  // and the terminal eta event is emitted exactly once, after the last route.
+  let track: live.InFlight | undefined;
+
   for (const routeName of chain) {
     const m = c.models[routeName];
     const p: ProviderCfg | undefined = c.providers[m.provider];
@@ -233,8 +266,6 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       if (p?.disabled) console.warn(`[ROUTER] provider ${m.provider} is disabled, skipping`);
       continue;
     }
-
-    let track: live.InFlight | undefined;
 
     for (const keyName of keyOrder(p, m, seed)) {
       if ((live.cooldown.get(keyName) ?? 0) > Date.now()) continue;
@@ -254,6 +285,12 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           clientStartedAt: started,
         });
         eta.begin(track);
+      } else if (track.alias !== routeName || track.keyName !== keyName) {
+        // Same logical request on a new route/key: keep the live frames accurate.
+        track.alias = routeName;
+        track.provider = m.provider;
+        track.model = m.model;
+        track.keyName = keyName;
       }
 
       let up: Response;
@@ -285,7 +322,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           : up.status >= 500 ? 15_000 : 600_000;
         live.cool(keyName, ms);
         lastStatus = up.status;
-        lastText = await up.text();
+        try { lastText = await up.text(); } catch { /* error body unreadable -> keep the last one */ }
         live.setFailover(track.id, { from: keyName, status: up.status, reason: `${up.status} on ${keyName}` });
         console.warn(`[ROUTER] ${keyName} -> ${up.status}, cooling ${Math.round(ms / 1000)}s, trying next`);
         continue;
@@ -293,14 +330,15 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
 
       return relay(up, res, body, routeName, m, keyName, started, track);
     }
+  }
 
-    // Every key for this route failed; close the tracked request before moving on.
-    if (track) {
-      live.finishRequest(track.id, {
-        alias: routeName, provider: m.provider, model: m.model, key: track.keyName, status: lastStatus,
-        ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
-      });
-    }
+  // The whole chain failed: close the tracked request exactly once, after every
+  // route had its chance (failover successes never reach this terminal frame).
+  if (track && live.inFlight.has(track.id)) {
+    live.finishRequest(track.id, {
+      alias: track.alias, provider: track.provider, model: track.model, key: track.keyName, status: lastStatus,
+      ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
+    });
   }
 
   res.writeHead(lastStatus, { "content-type": "application/json" });

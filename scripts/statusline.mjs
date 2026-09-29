@@ -13,9 +13,18 @@ function envFromDotenv() {
     ? join(home, ".env")
     : join(dirname(fileURLToPath(import.meta.url)), "..", ".env");
   try {
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*(#.*)?$/);
-      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    // Same value rules as the router's own loader (src/config.ts): only a
+    // whitespace-preceded '#' starts an inline comment, so keys may contain '#'.
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const i = t.indexOf("=");
+      if (i === -1) continue;
+      const k = t.slice(0, i).trim();
+      let v = t.slice(i + 1).trim();
+      if (!/^["']/.test(v)) v = v.replace(/\s+#.*$/, "");
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+      if (k && process.env[k] === undefined) process.env[k] = v;
     }
   } catch {}
 }
@@ -33,6 +42,7 @@ const toks = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 try {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 2000);
+  t.unref(); // a rejected fetch must not keep the process alive for the full 2s
   const res = await fetch(`http://127.0.0.1:${port}/admin/eta`, {
     headers: key ? { "x-api-key": key } : {},
     signal: ac.signal,
@@ -44,7 +54,8 @@ try {
   const tail = s
     ? ` - ${toks((s.tokensIn || 0) + (s.tokensOut || 0))} tok - $${(s.cost || 0).toFixed(4)}`
     : "";
-  const r = (d.running || []).slice(-1)[0]; // longest-running entry
+  // longest-running entry (earliest start - same pick as the UI header widget)
+  const r = (d.running || []).slice().sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0))[0];
   if (r) {
     const eta = r.etaMs == null ? "~estimating" : `~${fmt(r.etaMs)}`;
     console.log(`${r.provider}/${r.model} - ${fmt(r.elapsedMs)} - ${eta}${tail}`);

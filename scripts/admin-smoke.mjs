@@ -139,9 +139,13 @@ t("401 on DELETE without key", (await fetch(R + "/admin/models/a", { method: "DE
   const r = await fetch(R + "/ui");
   const html = await r.text();
   t("UI shell served without key", r.status === 200);
+  // The inlined vendor bundle contains markup-like literals, so the markup-level
+  // checks run on the HTML with inline (src-less) script bodies stripped; the
+  // code-level fetch/@import checks still scan the full text.
+  const markup = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (tag, attrs) => (/\bsrc=/i.test(attrs) ? tag : ""));
   t("UI loads no external resources",
-    !/<script[^>]+\bsrc=/i.test(html) && !/<link[^>]+stylesheet/i.test(html) &&
-    !/@import/i.test(html) && !/fetch\(\s*["'`]https?:/i.test(html) && !/<img/i.test(html));
+    !/<script[^>]+\bsrc=/i.test(markup) && !/<link[^>]+stylesheet/i.test(markup) &&
+    !/@import/i.test(html) && !/fetch\(\s*["'`]https?:/i.test(html) && !/<img/i.test(markup));
   t("UI sets a restrictive CSP", /default-src 'none'/.test(r.headers.get("content-security-policy") || ""));
   t("UI keeps the key out of the markup", !html.includes(ROUTER_KEY));
 }

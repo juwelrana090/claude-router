@@ -89,7 +89,8 @@ function computeEta(f: live.InFlight, now: number): { etaMs: number | null; expe
   if (!f.firstTokenAt) {
     // Pre-first-token: pure historical estimate once enough samples exist.
     if (hasHistory && medTps > 0 && expected !== null) etaMs = clampEta(medTtft + (expected / medTps) * 1000);
-  } else if (blend !== null && blend > 0.1 && expected !== null) {
+  } else if (hasHistory && blend !== null && blend > 0.1 && expected !== null) {
+    // Same MIN_HISTORY gate as pre-token: below 5 samples stay on "estimating...".
     etaMs = clampEta((Math.max(1, expected - outSoFar) / blend) * 1000);
   }
   return { etaMs, expected };
@@ -236,9 +237,11 @@ export function sessionBump(rec: {
     s = undefined; // idle window elapsed -> fresh window under the same id
   }
   if (!s) {
+    // The window opens when the first request started, not when it finished.
+    const firstStart = rec.ms > 0 ? now - rec.ms : now;
     s = {
       sessionId: rec.sessionId,
-      startedAt: now,
+      startedAt: firstStart,
       lastActiveAt: now,
       requests: 0,
       totalMs: 0,
@@ -330,5 +333,11 @@ export function seedHistory(): void {
         outputTokensPerSec: typeof rec.outputTokensPerSec === "number" ? rec.outputTokensPerSec : null,
       });
     } catch { /* corrupt line -> skip */ }
+  });
+  // An unreadable log (EACCES, swapped file) must degrade to empty history,
+  // not surface as an uncaughtException that kills the router at startup.
+  rl.on("error", (e) => {
+    console.warn("[ETA] usage log unreadable -> seeding with empty history:",
+      e instanceof Error ? e.message : String(e));
   });
 }

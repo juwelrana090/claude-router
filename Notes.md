@@ -33,14 +33,17 @@ give me prompt only
 Live per-request timing and ETA estimation for the router.
 
 ### New usage.jsonl fields (additive, no migration)
+
 Each new line in `logs/usage.jsonl` gains: `sessionId`, `startedAt`, `firstTokenAt`, `durationMs`, `ttftMs`, `outputTokensPerSec` (nullable). Old lines keep the old shape and stay valid — fields are only added to new lines, so existing usage data is never rewritten or at risk.
 
 ### `eta` SSE event (GET /admin/events)
+
 While a request runs, an `event: eta` frame is sent at least once per second:
 `requestId, sessionId, alias, provider, model, status (running|done|error), startedAt, elapsedMs, firstTokenAt, ttftMs, etaMs, expectedOutputTokens, outputTokensSoFar, tokensPerSec, failover`.
 When the request finishes, exactly one terminal `eta` event with `status: "done"|"error"` and the authoritative `durationMs` is sent (`etaMs` null on terminal). The same fields also ride the `/admin/snapshot` snapshot tick for polling clients.
 
 ### ETA formula
+
 - Per `provider/model`, keep the last 50 successful requests; use medians of tokens/sec, TTFT and output length.
 - `expectedOutputTokens = min(historical median output length, request max_tokens)` (fall back to whichever exists).
 - `blended speed = 0.7 * live tokens/sec + 0.3 * historical median tokens/sec`.
@@ -49,9 +52,11 @@ When the request finishes, exactly one terminal `eta` event with `status: "done"
 - A session (>30-min idle gap resets) shows total elapsed since the first request and average time per request (see `GET /admin/eta`, also mirrored as `session` in the snapshot).
 
 ### Usage summary additions
+
 `GET /admin/usage/summary?range=1h|24h|7d|30d` rows gain `avgMs` and `avgTokensPerSec`, plus `daily[]` and `monthly[]` average-duration-per-provider/model tables (new `30d` range).
 
 ### Statusline setup (Claude CLI)
+
 `scripts/statusline.mjs` prints one line: `provider/model - mm:ss elapsed - ~mm:ss left - session tokens - session cost` (shows `~estimating` while ETA is unknown, `claude-router - idle` / `claude-router - offline` otherwise). Enable it in Claude settings:
 
 ```json
@@ -59,3 +64,20 @@ When the request finishes, exactly one terminal `eta` event with `status: "done"
 ```
 
 Replace the path with your real absolute path to this repo. The script reads `ROUTER_PORT` / `ROUTER_KEY` from the router `.env` (repo root, or set `ROUTER_HOME`) and calls `GET /admin/eta` on 127.0.0.1; it never prints the key and always exits 0.
+
+Read https://ui.lobehub.com/skills.md and follow it to build UI with @lobehub/ui.
+
+update skills :: https://ui.lobehub.com/skills.md
+
+i want UI update use lobehub/ui
+
+# Claude Code
+
+mkdir -p .claude/skills && cd .claude/skills
+git clone https://github.com/apexcharts/apexcharts-skill.git
+
+i want to use apexcharts for live token monitoring, comarisone, uses
+
+why use UI and web, (web) need one only. one command use run both server and web
+
+also need icons : /src/ui/icons/\*\*
