@@ -13,12 +13,14 @@
     "check": "tsc --noEmit",
     "smoke": "npm run -s build && node scripts/smoke.mjs",
     "smoke:admin": "npm run -s build && node scripts/admin-smoke.mjs",
-    "smoke:all": "npm run -s smoke && npm run -s smoke:admin"
+    "smoke:all": "npm run -s smoke && npm run -s smoke:admin && npm run -s smoke:guard",
+    "smoke:guard": "npm run -s build && node scripts/guard-smoke.mjs"
   },
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
-  }
+  },
+  "engines": { "node": ">=22.13" }
 }

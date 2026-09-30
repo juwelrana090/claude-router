@@ -6,9 +6,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   BACKUP_DIR, Config, ENV_FILE, ModelCfg, PORT, ProviderCfg, ROUTES_FILE,
   StaleVersionError, ValidationError, commitConfig, commitEnv, configVersion, envVersion,
-  getCfg, validateEnvName, validateModelAlias, validateModelBody, validateNoCycle,
+  getCfg, readEnvText, validateEnvName, validateModelAlias, validateModelBody, validateNoCycle,
   validateProviderBody, validateProviderName,
 } from "./config";
+import { DATA_DIR, DB_FILE, SETTING_DEFAULTS, allSettings, db, setSetting } from "./db";
+import { userCount } from "./auth";
+import * as history from "./history";
 import {
   MAX_SSE_CLIENTS, RECENT_MAX, addClient, cooldownLeft, dropClient, inFlight,
   lastUsedKey, lastUsedProvider, providerRollup, recent, resetCooldown, rollup, sseClientCount,
@@ -105,8 +108,10 @@ function keyView(envName: string): KeyView {
 }
 
 function providerView(name: string, p: ProviderCfg) {
+  const keyless = p.auth === "none";
   const keys = p.keys.map(keyView);
   return {
+    keyless,
     name,
     baseURL: p.baseURL,
     auth: p.auth,
@@ -114,8 +119,8 @@ function providerView(name: string, p: ProviderCfg) {
     dropBodyFields: p.dropBodyFields ?? [],
     disabled: !!p.disabled,
     keys,
-    keysTotal: keys.length,
-    keysHealthy: keys.filter((k) => k.configured && !k.cooling).length,
+    keysTotal: keyless ? 1 : keys.length,
+    keysHealthy: keyless ? 1 : keys.filter((k) => k.configured && !k.cooling).length,
     models: Object.keys(getCfg().models).filter((a) => getCfg().models[a].provider === name),
     lastUsed: lastUsedProvider(name),
     last5m: providerRollup(name, 5),
@@ -124,6 +129,7 @@ function providerView(name: string, p: ProviderCfg) {
 
 function modelView(alias: string, m: ModelCfg) {
   const p = getCfg().providers[m.provider];
+  const keyless = p?.auth === "none";
   const keys = m.key ? [keyView(m.key)] : (p?.keys ?? []).map(keyView);
   return {
     alias,
@@ -132,8 +138,8 @@ function modelView(alias: string, m: ModelCfg) {
     price: m.price ?? null,
     providerMissing: !p,
     providerDisabled: !!p?.disabled,
-    keysHealthy: keys.filter((k) => k.configured && !k.cooling).length,
-    keysTotal: keys.length,
+    keysHealthy: keyless ? 1 : keys.filter((k) => k.configured && !k.cooling).length,
+    keysTotal: keyless ? 1 : keys.length,
     lastUsed: lastUsedProvider(m.provider),
   };
 }
@@ -483,9 +489,49 @@ on("POST", /^\/admin\/providers$/, async (req, res) => {
   if (c.providers[name]) throw new ValidationError([{ field: "name", message: `"${name}" already exists` }]);
   const version = expectVersion(body);
   const cfg = validateProviderBody(body);
-  const next: Config = { ...c, providers: { ...c.providers, [name]: { ...cfg, keys: [] } } };
+
+  // Keys can be given right here: { envName?, value? } rows. A row with a value is written to .env;
+  // a row with only an envName attaches a variable that already exists in .env.
+  const rawKeys = body.keys === undefined ? [] : body.keys;
+  if (!Array.isArray(rawKeys)) throw new ValidationError([{ field: "keys", message: "must be a list" }]);
+  if (cfg.auth === "none" && rawKeys.length) {
+    throw new ValidationError([{ field: "keys", message: 'must be empty when auth is "none" (no key needed)' }]);
+  }
+  const taken = new Map<string, string>();
+  for (const [pn, pv] of Object.entries(c.providers)) for (const k of pv.keys) taken.set(k, pn);
+  const base = name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const keys: string[] = [];
+  const setEnv: Record<string, string> = {};
+  const errors: { field: string; message: string }[] = [];
+  rawKeys.forEach((row: unknown, i: number) => {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const value = typeof r.value === "string" ? r.value.trim() : "";
+    let envName = typeof r.envName === "string" && r.envName.trim() ? r.envName.trim() : "";
+    if (!envName) {
+      let n = 1;
+      while (taken.has(`${base}_KEY_${n}`) || keys.includes(`${base}_KEY_${n}`)) n++;
+      envName = `${base}_KEY_${n}`;
+    }
+    try { validateEnvName(envName, `keys.${i}.envName`); } catch (e) { errors.push(...(e as ValidationError).errors); return; }
+    if (taken.has(envName) || keys.includes(envName)) {
+      errors.push({ field: `keys.${i}.envName`, message: `"${envName}" is already used${taken.has(envName) ? ` by provider "${taken.get(envName)}"` : " in this list"}` });
+      return;
+    }
+    if (value && value.length < 4) { errors.push({ field: `keys.${i}.value`, message: "must be at least 4 characters" }); return; }
+    if (!value && !envNamesInFile().has(envName)) {
+      errors.push({ field: `keys.${i}.value`, message: `is required (there is no ${envName} in .env to attach)` });
+      return;
+    }
+    keys.push(envName);
+    if (value) setEnv[envName] = value;
+  });
+  if (errors.length) throw new ValidationError(errors);
+
+  const next: Config = { ...c, providers: { ...c.providers, [name]: { ...cfg, keys } } };
   commit(next, version);
-  sendJSON(res, 201, { version: configVersion(), provider: providerView(name, next.providers[name]) });
+  if (Object.keys(setEnv).length) commitEnv(setEnv, [], typeof body.envVersion === "string" ? body.envVersion : undefined);
+  for (const k of keys) resetCooldown(k);
+  sendJSON(res, 201, { version: configVersion(), envVersion: envVersion(), provider: providerView(name, getCfg().providers[name]) });
 });
 
 on("GET", /^\/admin\/providers\/([^/]+)$/, (_req, res, [name]) => {
@@ -892,6 +938,170 @@ on("GET", /^\/admin\/usage\/summary$/, async (req, res) => {
 });
 
 // ---- entry point used by index.ts ----
+
+// ---------- .env key discovery ----------
+/** Variable NAMES defined in the .env file (never values, never the process environment). */
+function envNamesInFile(): Set<string> {
+  const out = new Set<string>();
+  for (const line of readEnvText().split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const i = t.indexOf("=");
+    if (i > 0) out.add(t.slice(0, i).trim());
+  }
+  return out;
+}
+
+const SECRETISH = /(^|_)(KEY|TOKEN|SECRET)(_|$)/i;
+const NOT_PROVIDER_KEYS = new Set(["ROUTER_KEY", "ADMIN_PASSWORD"]);
+
+on("GET", /^\/admin\/env\/keys$/, (req, res) => {
+  const c = getCfg();
+  const attached = new Map<string, string>();
+  for (const [pn, pv] of Object.entries(c.providers)) for (const k of pv.keys) attached.set(k, pn);
+  const wanted = new URL(req.url ?? "/", "http://localhost").searchParams.get("provider") ?? "";
+  const wantedBase = wanted.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const names = [...envNamesInFile()].filter((n) => SECRETISH.test(n) && !NOT_PROVIDER_KEYS.has(n));
+  const keys = names.map((envName) => {
+    const v = process.env[envName] ?? "";
+    const suggested = Object.keys(c.providers).find((pn) => envName.startsWith(`${pn.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`)) ?? null;
+    return {
+      envName, configured: !!v, last4: v ? v.slice(-4) : "",
+      attachedTo: attached.get(envName) ?? null, suggestedProvider: suggested,
+    };
+  });
+  sendJSON(res, 200, {
+    envVersion: envVersion(),
+    keys: wanted ? keys.filter((k) => !k.attachedTo && (k.suggestedProvider === wanted || envNameMatches(k.envName, wantedBase))) : keys,
+  });
+});
+const envNameMatches = (envName: string, base: string): boolean => !!base && envName.startsWith(`${base}_`);
+
+on("POST", /^\/admin\/providers\/([^/]+)\/keys\/attach$/, async (req, res, [name]) => {
+  const body = await readJSONBody(req);
+  const c = getCfg();
+  const p = c.providers[name];
+  if (!p) return fail(res, 404, "not_found_error", `No provider "${name}"`);
+  const version = expectVersion(body);
+  const list = Array.isArray(body.envNames) ? body.envNames : [];
+  if (!list.length) throw new ValidationError([{ field: "envNames", message: "must be a non-empty list" }]);
+  const inFile = envNamesInFile();
+  const owner = new Map<string, string>();
+  for (const [pn, pv] of Object.entries(c.providers)) for (const k of pv.keys) owner.set(k, pn);
+  const errors: { field: string; message: string }[] = [];
+  const add: string[] = [];
+  list.forEach((raw: unknown, i: number) => {
+    let n: string;
+    try { n = validateEnvName(raw, `envNames.${i}`); } catch (e) { errors.push(...(e as ValidationError).errors); return; }
+    if (!inFile.has(n)) errors.push({ field: `envNames.${i}`, message: `${n} is not defined in .env` });
+    else if (owner.has(n) && owner.get(n) !== name) errors.push({ field: `envNames.${i}`, message: `${n} already belongs to provider "${owner.get(n)}"` });
+    else if (!p.keys.includes(n) && !add.includes(n)) add.push(n);
+  });
+  if (errors.length) throw new ValidationError(errors);
+  const next: Config = { ...c, providers: { ...c.providers, [name]: { ...p, keys: [...p.keys, ...add] } } };
+  commit(next, version);
+  sendJSON(res, 200, { version: configVersion(), attached: add, provider: providerView(name, getCfg().providers[name]) });
+});
+
+// ---------- request history + token insights ----------
+const RANGE_MS: Record<string, number> = { "1h": 3600e3, "24h": 86400e3, "7d": 7 * 86400e3, "30d": 30 * 86400e3, all: 3650 * 86400e3 };
+
+on("GET", /^\/admin\/requests$/, (req, res) => {
+  const q = new URL(req.url ?? "/", "http://localhost").searchParams;
+  const num = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
+  const status = q.get("status");
+  const out = history.listRequests({
+    limit: num("limit"), before: num("before"),
+    status: status === "ok" || status === "error" ? status : undefined,
+    alias: q.get("alias") || undefined, provider: q.get("provider") || undefined,
+    q: q.get("q") || undefined, minCtx: num("minCtx"),
+  });
+  sendJSON(res, 200, {
+    ...out,
+    running: [...inFlight.values()].map((f) => ({
+      id: f.id, alias: f.alias, provider: f.provider, model: f.model, key: f.keyName, startedAt: f.startedAt,
+      stream: f.stream, status: f.status, failover: !!f.failover, outSoFar: f.outSoFar ?? 0, tokensPerSec: f.tokensPerSec ?? null,
+    })),
+  });
+});
+
+on("POST", /^\/admin\/requests\/clear$/, (_req, res) => {
+  sendJSON(res, 200, { deleted: history.clearAll() });
+});
+
+on("GET", /^\/admin\/insights$/, (req, res) => {
+  const range = new URL(req.url ?? "/", "http://localhost").searchParams.get("range") ?? "24h";
+  if (!(range in RANGE_MS)) throw new ValidationError([{ field: "range", message: `must be one of ${Object.keys(RANGE_MS).join(", ")}` }]);
+  sendJSON(res, 200, { range, ...history.insights(RANGE_MS[range]) });
+});
+
+// ---------- app settings (SQLite) + system information ----------
+on("GET", /^\/admin\/app-settings$/, (_req, res) => sendJSON(res, 200, { settings: allSettings() }));
+
+on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
+  const body = await readJSONBody(req);
+  const input = (body.settings ?? {}) as Record<string, unknown>;
+  const errors: { field: string; message: string }[] = [];
+  const clean: Record<string, unknown> = {};
+  const int = (k: string, lo: number, hi: number) => {
+    const n = Number(input[k]);
+    if (!Number.isInteger(n) || n < lo || n > hi) errors.push({ field: k, message: `must be a whole number from ${lo} to ${hi}` });
+    else clean[k] = n;
+  };
+  for (const k of Object.keys(input)) {
+    if (!(k in SETTING_DEFAULTS)) { errors.push({ field: k, message: "unknown setting" }); continue; }
+    if (k === "history.retentionDays") int(k, 0, 3650);
+    else if (k === "context.warnTokens") int(k, 10_000, 2_000_000);
+    else if (k === "pricing.peakMultiplier") {
+      const n = Number(input[k]);
+      if (!Number.isFinite(n) || n < 1 || n > 10) errors.push({ field: k, message: "must be a number from 1 to 10" }); else clean[k] = n;
+    } else if (k === "guard.mode") {
+      if (input[k] !== "off" && input[k] !== "shadow" && input[k] !== "on") errors.push({ field: k, message: "must be off, shadow or on" });
+      else clean[k] = input[k];
+    } else if (k === "guard.highTokens") int(k, 20_000, 2_000_000);
+    else if (k === "guard.lowTokens") int(k, 5_000, 1_000_000);
+    else if (k === "guard.keepRecent") int(k, 1, 50);
+    else if (k === "guard.minChars") int(k, 200, 100_000);
+    else if (k === "ui.projectName") {
+      const v = String(input[k] ?? "").trim();
+      if (!v || v.length > 40) errors.push({ field: k, message: "must be 1-40 characters" }); else clean[k] = v;
+    }
+  }
+  const cur = allSettings();
+  const hi = Number(clean["guard.highTokens"] ?? cur["guard.highTokens"]);
+  const lo = Number(clean["guard.lowTokens"] ?? cur["guard.lowTokens"]);
+  if (("guard.highTokens" in clean || "guard.lowTokens" in clean) && lo >= hi) {
+    errors.push({ field: "guard.lowTokens", message: "must be lower than guard.highTokens" });
+  }
+  if (errors.length) throw new ValidationError(errors);
+  for (const [k, v] of Object.entries(clean)) setSetting(k, v);
+  if ("history.retentionDays" in clean) history.pruneOld();
+  sendJSON(res, 200, { settings: allSettings() });
+});
+
+const startedAt = Date.now();
+on("GET", /^\/admin\/system$/, (_req, res) => {
+  const c = getCfg();
+  const count = (sql: string) => Number((db.prepare(sql).get() as { n: number }).n);
+  const oldest = db.prepare("SELECT MIN(ended_at) AS t FROM requests").get() as { t: number | null };
+  let dbBytes = 0;
+  try { dbBytes = fs.statSync(DB_FILE).size; } catch { /* not yet created */ }
+  let logBytes = 0;
+  try { logBytes = fs.statSync(LOG_FILE).size; } catch { /* no log yet */ }
+  let version = "";
+  try { version = JSON.parse(fs.readFileSync(path.join(process.env.ROUTER_HOME ?? path.resolve(__dirname, ".."), "package.json"), "utf8")).version; } catch { /* ignore */ }
+  sendJSON(res, 200, {
+    version, node: process.version, platform: `${process.platform}/${process.arch}`, pid: process.pid,
+    uptimeSec: Math.round((Date.now() - startedAt) / 1000), port: PORT,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, memoryMb: Math.round(process.memoryUsage().rss / 1048576),
+    paths: { routes: ROUTES_FILE, env: ENV_FILE, backups: BACKUP_DIR, database: DB_FILE, dataDir: DATA_DIR, usageLog: LOG_FILE },
+    database: { bytes: dbBytes, requests: count("SELECT COUNT(*) AS n FROM requests"), oldestRequestAt: oldest.t, users: userCount() },
+    usageLogBytes: logBytes,
+    counts: { providers: Object.keys(c.providers).length, models: Object.keys(c.models).length },
+    sseClients: sseClientCount(),
+  });
+});
+
 export async function handleAdmin(
   req: IncomingMessage,
   res: ServerResponse,

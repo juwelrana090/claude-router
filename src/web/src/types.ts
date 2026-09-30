@@ -31,6 +31,13 @@ export interface EtaEvent {
   /** Terminal only. Authoritative total duration. */
   durationMs?: number;
   failover?: boolean;
+  /** Terminal frames only. */
+  httpStatus?: number;
+  inTokens?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  ctxTokens?: number;
+  cost?: number;
 }
 
 // ---------- Session totals ----------
@@ -196,4 +203,77 @@ export interface TestBody {
 export interface AddKeyBody {
   envName: string;
   value: string;
+}
+
+// ---------- Request history (GET /admin/requests) ----------
+
+export interface HistoryRow {
+  id: string;
+  sessionId: string | null;
+  alias: string;
+  provider: string;
+  model: string;
+  key: string | null;
+  status: number;
+  stream: boolean;
+  failover: boolean;
+  startedAt: number;
+  firstTokenAt: number | null;
+  endedAt: number;
+  durationMs: number | null;
+  ttftMs: number | null;
+  /** Fresh (uncached) input tokens. */
+  in: number;
+  out: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Whole prompt size: in + cacheRead + cacheWrite. This is what every request re-sends. */
+  ctx: number;
+  cost: number;
+  tps: number | null;
+  /** Tokens the context guard removed from this request (mode on). */
+  guardSaved: number;
+  /** Tokens it would have removed (mode shadow). */
+  guardWould: number;
+}
+
+export interface RunningRow {
+  id: string;
+  alias: string;
+  provider: string;
+  model: string;
+  key: string;
+  startedAt: number;
+  stream: boolean;
+  status: string;
+  failover: boolean;
+  outSoFar: number;
+  tokensPerSec: number | null;
+}
+
+export interface HistoryResponse {
+  rows: HistoryRow[];
+  hasMore: boolean;
+  total: number;
+  running: RunningRow[];
+}
+
+export interface Insights {
+  range: string;
+  warnTokens: number;
+  totals: {
+    requests: number;
+    errors: number;
+    fresh: number;
+    out: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cost: number;
+    input: number;
+    cacheHitPct: number;
+  };
+  context: { avg: number; p50: number; p90: number; max: number; overWarn: number; compactions: number };
+  guard: { requests: number; saved: number; would: number; input: number };
+  topSessions: { sessionId: string; requests: number; ctxTotal: number; maxCtx: number; startedAt: number; endedAt: number }[];
+  hourly: { t: number; requests: number; ctx: number; out: number; cacheRead: number }[];
 }

@@ -1,3 +1,277 @@
+# 03 — Live (gauge + big numbers), History, Usage
+
+**Run after 02.** Changes `src/web/` only.
+
+## What this step adds and why
+
+- **Live**: an always-visible 24-hour strip — requests, **prompt tokens sent** (`54.9M`; exact number and "54.86 million" on hover), **output tokens**, cost estimate. A **speedometer gauge** (ApexCharts radial bar) shows the combined tokens/second of everything running right now; the throughput chart stays; a **Context size** card shows typical/large/biggest prompt and warns when most requests exceed your limit; **Recent requests** now comes from the database (survives refresh and restart).
+- **History** (new page): every request from the moment it starts (blue "Running" row) until it finishes (green/red), with context, fresh input, cache read, output, TTFT, duration, tok/s and cost; search, model and status filters, "load more", a details drawer.
+- **Usage**: same token definitions as Live (**Prompt tokens sent = fresh + cache read**, shown with the split) — this removes the "Tokens in 630k here vs 58M there" confusion. New **Prompt size** panel: average, p50, p90, biggest, cache-hit %, compactions, biggest sessions.
+
+## How to work (read this first)
+
+- This file is **complete**. Everything you need is below. **Do not open, search or read any other file or folder.**
+  If a step says "replace the whole file" you do not need to read the old one. If a step is a diff, open **only that one file** to apply it.
+- Diffs are unified diffs with 3 lines of context. Apply each from the repo root with
+  `git apply --ignore-whitespace --whitespace=nowarn <file.patch>` (save the block to a `.patch` file first), or edit by hand: `-` lines are removed, `+` lines are added, everything else is context.
+  If a hunk does not match because the line already looks like the `+` version, skip that hunk and say so.
+- Files in this repo use Windows line endings (CRLF). Keep each existing file's line endings. New files may use either.
+- Do not change anything that is not listed. No refactors, no renames, no formatting changes.
+- Never print, log, or commit `.env` values.
+- When done, run the verification commands at the end and paste their **real output**. If one fails, fix only what the failure points to, then re-run it.
+
+## Steps
+
+### Step 1 — Create these new files
+
+### `src/web/src/components/RequestTable.tsx` — NEW file
+
+````tsx
+import { Table, Tag, Tooltip, Typography } from 'antd';
+import type { TableColumnsType } from 'antd';
+import { fmtCompact, fmtDateTime, fmtExact, fmtMs, fmtPct, fmtTps, fmtUsd } from '../format';
+import type { HistoryRow, RunningRow } from '../types';
+
+export type Row = (HistoryRow & { running?: false }) | (RunningRow & { running: true; ctx?: undefined });
+
+/** One row = one request, from the moment it starts (blue) until it finishes (green/red). */
+export function requestColumns(warnTokens: number, onOpen?: (r: HistoryRow) => void): TableColumnsType<Row> {
+  return [
+    {
+      title: 'Time',
+      width: 128,
+      render: (_, r) => <Typography.Text type="secondary">{fmtDateTime(r.running ? r.startedAt : r.endedAt)}</Typography.Text>,
+    },
+    {
+      title: 'Status',
+      width: 96,
+      render: (_, r) =>
+        r.running ? (
+          <Tag color="processing">Running</Tag>
+        ) : r.status >= 400 ? (
+          <Tag color="error">{r.status}</Tag>
+        ) : (
+          <Tag color="success">{r.status}</Tag>
+        ),
+    },
+    {
+      title: 'Model',
+      render: (_, r) => (
+        <div style={{ lineHeight: 1.3 }}>
+          <Typography.Text strong>{r.alias}</Typography.Text>
+          {r.failover && <Tag color="warning" style={{ marginLeft: 6 }}>failover</Tag>}
+          <div><Typography.Text type="secondary" style={{ fontSize: 12 }}>{r.provider} · {r.model}</Typography.Text></div>
+        </div>
+      ),
+    },
+    {
+      title: <Tooltip title="Whole prompt sent (fresh + cached). Every request re-sends the conversation, so this number is what drives token use.">Context</Tooltip>,
+      width: 100,
+      align: 'right',
+      render: (_, r) =>
+        r.running ? '…' : (
+          <Tooltip title={`${fmtExact(r.ctx)} tokens (${fmtPct(r.ctx ? (r.cacheRead / r.ctx) * 100 : 0, 0)} from cache)`}>
+            <span style={{ color: r.ctx >= warnTokens ? '#E0A344' : undefined, fontWeight: r.ctx >= warnTokens ? 600 : 400 }}>{fmtCompact(r.ctx)}</span>
+          </Tooltip>
+        ),
+    },
+    { title: 'Fresh in', width: 90, align: 'right', render: (_, r) => (r.running ? '…' : <Tooltip title={fmtExact(r.in)}>{fmtCompact(r.in)}</Tooltip>) },
+    { title: 'Cache read', width: 96, align: 'right', render: (_, r) => (r.running ? '…' : <Tooltip title={fmtExact(r.cacheRead)}>{fmtCompact(r.cacheRead)}</Tooltip>) },
+    {
+      title: 'Out',
+      width: 80,
+      align: 'right',
+      render: (_, r) => <Tooltip title={fmtExact(r.running ? r.outSoFar : r.out)}>{fmtCompact(r.running ? r.outSoFar : r.out)}</Tooltip>,
+    },
+    { title: 'TTFT', width: 84, align: 'right', render: (_, r) => (r.running ? '…' : fmtMs(r.ttftMs)) },
+    { title: 'Duration', width: 90, align: 'right', render: (_, r) => (r.running ? fmtMs(Date.now() - r.startedAt) : fmtMs(r.durationMs)) },
+    { title: 'tok/s', width: 70, align: 'right', render: (_, r) => (r.running ? fmtTps(r.tokensPerSec) : fmtTps(r.tps)) },
+    { title: 'Cost', width: 84, align: 'right', render: (_, r) => (r.running ? '…' : fmtUsd(r.cost)) },
+    ...(onOpen
+      ? [{ title: '', width: 60, render: (_: unknown, r: Row) => (r.running ? null : <a onClick={() => onOpen(r)}>Details</a>) }]
+      : []),
+  ];
+}
+
+export function RequestTable(props: {
+  rows: Row[];
+  loading?: boolean;
+  warnTokens: number;
+  onOpen?: (r: HistoryRow) => void;
+  compact?: boolean;
+}) {
+  return (
+    <Table<Row>
+      rowKey="id"
+      size={props.compact ? 'small' : 'middle'}
+      loading={props.loading}
+      columns={requestColumns(props.warnTokens, props.onOpen)}
+      dataSource={props.rows}
+      pagination={false}
+      scroll={{ x: 980 }}
+    />
+  );
+}
+````
+
+### `src/web/src/pages/History.tsx` — NEW file
+
+````tsx
+import { ReloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Descriptions, Drawer, Input, Segmented, Select, Space, Tag, Typography } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { api, subscribeEta } from '../api';
+import { useAppSettings } from '../appSettings';
+import { RequestTable, type Row } from '../components/RequestTable';
+import { fmtCompact, fmtDateTime, fmtExact, fmtMs, fmtPct, fmtUsd } from '../format';
+import type { HistoryResponse, HistoryRow } from '../types';
+
+const PAGE = 50;
+
+/** Persistent request log: survives restarts, includes requests that are still running. */
+export default function HistoryPage() {
+  const { settings } = useAppSettings();
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const status = (params.get('status') ?? 'all') as 'all' | 'ok' | 'error';
+  const alias = params.get('alias') ?? '';
+  const [data, setData] = useState<HistoryResponse | null>(null);
+  const [extra, setExtra] = useState<HistoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [aliases, setAliases] = useState<string[]>([]);
+  const [open, setOpen] = useState<HistoryRow | null>(null);
+  const [search, setSearch] = useState(q);
+
+  const set = (k: string, v: string) => {
+    const next = new URLSearchParams(params);
+    if (v && v !== 'all') next.set(k, v);
+    else next.delete(k);
+    setParams(next, { replace: true });
+  };
+
+  const load = useCallback(async () => {
+    const qs = new URLSearchParams({ limit: String(PAGE) });
+    if (q) qs.set('q', q);
+    if (status !== 'all') qs.set('status', status);
+    if (alias) qs.set('alias', alias);
+    try {
+      setData(await api<HistoryResponse>(`/admin/requests?${qs}`));
+      setExtra([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [q, status, alias]);
+
+  useEffect(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
+
+  // Refresh when a request starts or finishes (stream), and every 10s as a safety net.
+  useEffect(() => {
+    let timer: number | undefined;
+    const soon = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 400);
+    };
+    const unsub = subscribeEta((ev) => ev.status !== 'running' && soon());
+    const poll = window.setInterval(() => void load(), 10_000);
+    return () => {
+      unsub();
+      window.clearInterval(poll);
+      window.clearTimeout(timer);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    void api<{ models: { alias: string }[] }>('/admin/models').then((r) => setAliases(r.models.map((m) => m.alias))).catch(() => undefined);
+  }, []);
+
+  const more = async () => {
+    const all = [...(data?.rows ?? []), ...extra];
+    const before = all[all.length - 1]?.endedAt;
+    const qs = new URLSearchParams({ limit: String(PAGE), before: String(before) });
+    if (q) qs.set('q', q);
+    if (status !== 'all') qs.set('status', status);
+    if (alias) qs.set('alias', alias);
+    const r = await api<HistoryResponse>(`/admin/requests?${qs}`);
+    setExtra((e) => [...e, ...r.rows]);
+    setData((d) => (d ? { ...d, hasMore: r.hasMore } : d));
+  };
+
+  const rows: Row[] = useMemo(
+    () => [...(data?.running ?? []).map((r) => ({ ...r, running: true as const })), ...(data?.rows ?? []), ...extra],
+    [data, extra],
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <Typography.Title level={4} style={{ margin: 0 }}>History</Typography.Title>
+          <Typography.Text type="secondary">
+            {data ? `${fmtExact(data.total)} requests${q || status !== 'all' || alias ? ' match' : ' stored'}` : 'Loading…'} · kept for {settings['history.retentionDays'] || '∞'} days
+          </Typography.Text>
+        </div>
+        <Input.Search
+          allowClear
+          style={{ width: 260 }}
+          placeholder="Model, provider, session…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onSearch={(v) => set('q', v.trim())}
+        />
+        <Select
+          allowClear
+          style={{ width: 150 }}
+          placeholder="All models"
+          value={alias || undefined}
+          onChange={(v) => set('alias', v ?? '')}
+          options={aliases.map((a) => ({ value: a, label: a }))}
+        />
+        <Segmented value={status} onChange={(v) => set('status', String(v))} options={[{ value: 'all', label: 'All' }, { value: 'ok', label: 'OK' }, { value: 'error', label: 'Errors' }]} />
+        <Button icon={<ReloadOutlined />} onClick={() => void load()} aria-label="Refresh" />
+      </div>
+
+      {!loading && rows.length === 0 && <Alert type="info" showIcon message="No requests yet" description="Point Claude Code at the router and every request shows up here." />}
+
+      <RequestTable rows={rows} loading={loading} warnTokens={settings['context.warnTokens']} onOpen={setOpen} />
+      {data?.hasMore && (
+        <Button style={{ alignSelf: 'center' }} onClick={() => void more()}>Load more</Button>
+      )}
+
+      <Drawer title="Request details" width={480} open={!!open} onClose={() => setOpen(null)}>
+        {open && (
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Request">{open.id}</Descriptions.Item>
+            <Descriptions.Item label="Status">{open.status >= 400 ? <Tag color="error">{open.status}</Tag> : <Tag color="success">{open.status}</Tag>}{open.failover && <Tag color="warning">failover used</Tag>}</Descriptions.Item>
+            <Descriptions.Item label="Started">{fmtDateTime(open.startedAt)}</Descriptions.Item>
+            <Descriptions.Item label="Model">{open.alias} → {open.provider}/{open.model}</Descriptions.Item>
+            <Descriptions.Item label="Key">{open.key ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="Session">{open.sessionId ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="Context (prompt)">{fmtExact(open.ctx)} ({fmtCompact(open.ctx)})</Descriptions.Item>
+            <Descriptions.Item label="Fresh input">{fmtExact(open.in)}</Descriptions.Item>
+            <Descriptions.Item label="Cache read">{fmtExact(open.cacheRead)} ({fmtPct(open.ctx ? (open.cacheRead / open.ctx) * 100 : 0)})</Descriptions.Item>
+            <Descriptions.Item label="Cache write">{fmtExact(open.cacheWrite)}</Descriptions.Item>
+            <Descriptions.Item label="Output">{fmtExact(open.out)}</Descriptions.Item>
+            <Descriptions.Item label="Time to first token">{fmtMs(open.ttftMs)}</Descriptions.Item>
+            <Descriptions.Item label="Duration">{fmtMs(open.durationMs)}</Descriptions.Item>
+            <Descriptions.Item label="Cost (estimate)">{fmtUsd(open.cost)}</Descriptions.Item>
+          </Descriptions>
+        )}
+      </Drawer>
+      <Space />
+    </div>
+  );
+}
+````
+
+### Step 2 — Replace this file completely
+
+### `src/web/src/pages/Live.tsx` — REPLACE the whole file
+
+````tsx
 /**
  * Live page: real-time monitor for the router, fed by the /admin/events SSE
  * stream and reconciled against GET /admin/eta every few seconds.
@@ -403,15 +677,6 @@ export default function LivePage() {
             <div><Text type="secondary" fontSize={12}>Biggest</Text><div style={{ fontSize: 20, fontWeight: 600 }}>{fmtCompact(insights.context.max)}</div></div>
             <div><Text type="secondary" fontSize={12}>Compactions</Text><div style={{ fontSize: 20, fontWeight: 600 }}>{insights.context.compactions}</div></div>
             <div style={{ flex: 1, minWidth: 240 }}>
-              {insights.guard && (insights.guard.saved > 0 || insights.guard.would > 0) && (
-                <div style={{ marginBottom: 6 }}>
-                  <Text type="secondary" fontSize={12}>
-                    Context guard ({settings['guard.mode']}):{' '}
-                    {insights.guard.saved > 0 ? `removed ${fmtCompact(insights.guard.saved)} tokens` : `would remove ${fmtCompact(insights.guard.would)} tokens`} in 24 h ·{' '}
-                    <Link to="/settings/guard">settings</Link>
-                  </Text>
-                </div>
-              )}
               {insights.context.p90 >= settings['context.warnTokens'] ? (
                 <Tag color="warning">Large prompts: {fmtPct((insights.context.overWarn / Math.max(1, insights.totals.requests)) * 100, 0)} of requests are over {fmtCompact(settings['context.warnTokens'])}. Run /compact or /clear in Claude Code, or lower /autocompact.</Tag>
               ) : (
@@ -520,3 +785,125 @@ function RunningRow({ tracked, now }: { tracked: Tracked; now: number }) {
     </div>
   );
 }
+````
+
+### Step 3 — Apply this diff
+
+### `src/web/src/pages/Usage.tsx` — consistent token numbers + prompt-size panel
+
+````diff
+--- a/src/web/src/pages/Usage.tsx
++++ b/src/web/src/pages/Usage.tsx
+@@ -33,9 +33,12 @@
+ } from 'antd';
+ import type { ColumnsType } from 'antd/es/table';
+ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+-import { fetchSnapshot, fetchUsageSummary, subscribeEta } from '../api';
++import { api, fetchSnapshot, fetchUsageSummary, subscribeEta } from '../api';
++import { useAppSettings } from '../appSettings';
++import { fmtCompact, fmtExact, fmtPct, fmtUsd as fmtUsdShared } from '../format';
+ import { useThemeMode } from '../theme';
+ import type {
++  Insights,
+   DailyUsage,
+   SessionTotals,
+   UsageByNameRow,
+@@ -77,10 +80,8 @@
+ // ---------- Formatting ----------
+ 
+ const fmtInt = (n: number) => n.toLocaleString('en-US');
+-const fmtTokens = (n: number) =>
+-  n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : fmtInt(n);
+-const fmtCompact = (n: number) => (n >= 1e3 ? `${(n / 1e3).toFixed(n % 1e3 === 0 ? 0 : 1)}k` : String(Math.round(n)));
+-const fmtUsd = (n: number) => (n === 0 ? '$0.00' : n >= 100 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
++const fmtTokens = (n: number) => fmtCompact(n);
++const fmtUsd = (n: number) => fmtUsdShared(n);
+ const fmtMs = (n: number) => (n >= 10_000 ? `${(n / 1e3).toFixed(1)}s` : `${Math.round(n)}ms`);
+ const fmtAgo = (ts: number, now: number) => {
+   const s = Math.max(0, Math.round((now - ts) / 1e3));
+@@ -175,6 +176,15 @@
+   const { token } = theme.useToken();
+ 
+   const [range, setRange] = useState<UsageRange>('24h');
++  const { settings } = useAppSettings();
++  const [insights, setInsights] = useState<Insights | null>(null);
++  useEffect(() => {
++    let dead = false;
++    void api<Insights>(`/admin/insights?range=${range}`).then((r) => !dead && setInsights(r)).catch(() => undefined);
++    return () => {
++      dead = true;
++    };
++  }, [range]);
+   const [summary, setSummary] = useState<SummaryEx | null>(null);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
+@@ -676,12 +686,16 @@
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+                 <StatTile label="Requests" value={fmtInt(view.requests)} hint={summary.bucketLabel ?? range} />
+                 <StatTile
+-                  label="Tokens in"
+-                  value={fmtTokens(view.tokensIn)}
+-                  hint={view.cacheRead ? `${fmtTokens(view.cacheRead)} cache read` : undefined}
++                  label="Prompt tokens sent"
++                  value={
++                    <Tooltip title={`${fmtExact(view.tokensIn + view.cacheRead)} tokens = ${fmtExact(view.tokensIn)} fresh + ${fmtExact(view.cacheRead)} read from cache`}>
++                      <span>{fmtTokens(view.tokensIn + view.cacheRead)}</span>
++                    </Tooltip>
++                  }
++                  hint={`${fmtTokens(view.tokensIn)} fresh · ${fmtTokens(view.cacheRead)} cached`}
+                 />
+-                <StatTile label="Tokens out" value={fmtTokens(view.tokensOut)} />
+-                <StatTile label="Cost" value={fmtUsd(view.cost)} hint="estimated USD" />
++                <StatTile label="Output tokens" value={fmtTokens(view.tokensOut)} hint="generated by the model" />
++                <StatTile label="Cost" value={fmtUsd(view.cost)} hint={view.cost === 0 ? 'no prices set: Settings > Pricing' : 'estimated USD'} />
+                 <StatTile label="Avg response" value={view.requests ? fmtMs(view.avgMs) : '—'} hint="per request" />
+                 <StatTile
+                   label="Avg throughput"
+@@ -696,6 +710,42 @@
+                 <StatTile label="Running now" value={fmtInt(runningCount)} hint="in-flight requests (live)" />
+               </div>
+ 
++              {insights && insights.totals.requests > 0 ? (
++                <Panel
++                  title="Prompt size: where your tokens go"
++                  caption="Every request re-sends the whole conversation. A smaller prompt is the biggest saving. Numbers come from the request history."
++                >
++                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
++                    <StatTile label="Average prompt" value={fmtCompact(insights.context.avg)} hint="per request" />
++                    <StatTile label="Typical (p50)" value={fmtCompact(insights.context.p50)} hint="half are smaller" />
++                    <StatTile label="Large (p90)" value={fmtCompact(insights.context.p90)} hint="9 in 10 are smaller" />
++                    <StatTile label="Biggest" value={fmtCompact(insights.context.max)} />
++                    <StatTile label="Served from cache" value={fmtPct(insights.totals.cacheHitPct)} hint="cheap input" />
++                    <StatTile label="Compactions" value={String(insights.context.compactions)} hint="context shrank" />
++                  </div>
++                  <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
++                    {insights.context.p90 >= settings['context.warnTokens']
++                      ? `${fmtPct((insights.context.overWarn / Math.max(1, insights.totals.requests)) * 100, 0)} of requests are over ${fmtCompact(settings['context.warnTokens'])}. Compact earlier (see Settings > Claude Code) and use /clear between tasks.`
++                      : `Prompts stay under ${fmtCompact(settings['context.warnTokens'])}.`}
++                  </Typography.Paragraph>
++                  {insights.topSessions.length > 0 && (
++                    <Table
++                      style={{ marginTop: 12 }}
++                      size="small"
++                      pagination={false}
++                      rowKey="sessionId"
++                      dataSource={insights.topSessions}
++                      columns={[
++                        { title: 'Session', dataIndex: 'sessionId', render: (v: string) => <code>{v}</code> },
++                        { title: 'Requests', dataIndex: 'requests', align: 'right' as const, render: (v: number) => fmtInt(v) },
++                        { title: 'Prompt tokens sent', dataIndex: 'ctxTotal', align: 'right' as const, render: (v: number) => <Tooltip title={fmtExact(v)}>{fmtCompact(v)}</Tooltip> },
++                        { title: 'Biggest prompt', dataIndex: 'maxCtx', align: 'right' as const, render: (v: number) => fmtCompact(v) },
++                      ]}
++                    />
++                  )}
++                </Panel>
++              ) : null}
++
+               {stackChart && stackedOptions ? (
+                 <Panel title="Daily requests by provider" caption="Stacked volume per day in the selected range">
+                   <Chart
+````
+
+## Verify
+
+Run the checks after step 04 (this step imports `Settings` routes from it). If you want an early check: `cd src/web && npx tsc --noEmit` — the only acceptable errors at this point mention `Settings`.

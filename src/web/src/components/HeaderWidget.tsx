@@ -79,9 +79,7 @@ export default function HeaderWidget() {
   useEffect(() => {
     let disposed = false;
     const reconcile = (): void => {
-      // retry=false: the poll must not drive the key prompt (the pages do that
-      // at a saner cadence); it just reflects the stored key's health.
-      api<EtaSnapshot>('/admin/eta', {}, false)
+      api<EtaSnapshot>('/admin/eta')
         .then((snap) => {
           if (disposed) return;
           const at = Date.now();

@@ -32,7 +32,7 @@ export const PORT = Number(process.env.ROUTER_PORT || 21450);
 export const ROUTER_KEY = process.env.ROUTER_KEY || "";
 
 // ---------- config shape ----------
-export type AuthMode = "bearer" | "x-api-key" | "both";
+export type AuthMode = "bearer" | "x-api-key" | "both" | "none";
 
 export interface ProviderCfg {
   baseURL: string;
@@ -49,7 +49,7 @@ export interface ModelCfg {
   key?: string; // pin this model to one specific key (env var name)
   maxOutputTokens?: number;
   fallback?: string[]; // other router model names, tried in order
-  price?: { in: number; out: number; cacheRead?: number }; // USD per 1M tokens
+  price?: { in: number; out: number; cacheRead?: number; peak?: boolean }; // USD per 1M tokens; peak = provider charges more in its peak hours
 }
 
 export interface Config {
@@ -290,9 +290,9 @@ export function validateEnvName(raw: unknown, field = "envName"): string {
 }
 
 export function validateAuthMode(raw: unknown): AuthMode {
-  if (raw !== "bearer" && raw !== "x-api-key" && raw !== "both") {
+  if (raw !== "bearer" && raw !== "x-api-key" && raw !== "both" && raw !== "none") {
     throw new ValidationError([
-      { field: "auth", message: "must be one of: bearer, x-api-key, both" },
+      { field: "auth", message: "must be one of: bearer, x-api-key, both, none (no key, e.g. local Ollama)" },
     ]);
   }
   return raw;
@@ -360,6 +360,7 @@ export function validatePrice(raw: unknown, field = "price"): ModelCfg["price"] 
   };
   const price: NonNullable<ModelCfg["price"]> = { in: num(o.in, "in"), out: num(o.out, "out") };
   if (o.cacheRead !== undefined && o.cacheRead !== "") price.cacheRead = num(o.cacheRead, "cacheRead");
+  if (o.peak === true || o.peak === "true") price.peak = true;
   if (errors.length) throw new ValidationError(errors);
   return price;
 }

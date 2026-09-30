@@ -92,7 +92,7 @@ import { ApiError, api } from '../api';
 
 // ---------- Accurate admin view types (server shapes) ----------
 
-export type AuthMode = 'bearer' | 'x-api-key' | 'both';
+export type AuthMode = 'bearer' | 'x-api-key' | 'both' | 'none';
 
 export interface AdminKeyView {
   envName: string;
@@ -110,6 +110,7 @@ export interface AdminProviderView {
   dropBeta: boolean;
   dropBodyFields: string[];
   disabled: boolean;
+  keyless?: boolean;
   keys: AdminKeyView[];
   keysTotal: number;
   keysHealthy: number;
@@ -418,7 +419,16 @@ const AUTH_MODE_OPTIONS: { value: AuthMode; label: string }[] = [
   { value: 'bearer', label: 'bearer' },
   { value: 'x-api-key', label: 'x-api-key' },
   { value: 'both', label: 'both' },
+  { value: 'none', label: 'none (no key needed, e.g. a local Ollama)' },
 ];
+
+interface DiscoveredKey {
+  envName: string;
+  configured: boolean;
+  last4: string;
+  attachedTo: string | null;
+  suggestedProvider: string | null;
+}
 
 // ---------- Provider add/edit modal ----------
 
@@ -429,6 +439,7 @@ interface ProviderFormValues {
   dropBeta: boolean;
   dropBodyFields?: string[];
   disabled: boolean;
+  keys?: { envName?: string; value?: string }[];
 }
 
 function ProviderFormModal({
@@ -460,7 +471,7 @@ function ProviderFormModal({
             dropBodyFields: provider.dropBodyFields,
             disabled: provider.disabled,
           }
-        : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false },
+        : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false, keys: [{}] },
     );
     // Only on open / different provider: the 20s snapshot poll swaps the `provider` object and
     // would otherwise reset the form under the user's hands.
@@ -496,6 +507,12 @@ function ProviderFormModal({
             dropBeta: values.dropBeta,
             dropBodyFields: values.dropBodyFields ?? [],
             disabled: values.disabled,
+            keys:
+              values.auth === 'none'
+                ? []
+                : (values.keys ?? [])
+                    .filter((k) => k && (k.value || k.envName))
+                    .map((k) => ({ envName: k.envName?.trim() || undefined, value: k.value?.trim() || undefined })),
           }),
         }),
       );
@@ -536,6 +553,42 @@ function ProviderFormModal({
         <Form.Item name="auth" label="Auth mode" rules={[{ required: true }]}>
           <Select options={AUTH_MODE_OPTIONS} />
         </Form.Item>
+        {!isEdit && (
+          <Form.Item noStyle shouldUpdate={(a, b) => a.auth !== b.auth}>
+            {({ getFieldValue }) =>
+              getFieldValue('auth') === 'none' ? (
+                <Alert type="info" showIcon style={{ marginBottom: 16 }} message="No key needed" description="Requests are sent without an Authorization header. Use this for a local server such as Ollama or LM Studio." />
+              ) : (
+                <>
+                  <Typography.Text strong>API keys</Typography.Text>
+                  <Typography.Paragraph type="secondary" style={{ margin: '2px 0 8px' }}>
+                    Paste one or more keys. Each is written to .env only and never shown again. Leave the name empty to get an automatic one such as MY_PROVIDER_KEY_1. To attach a variable that already exists in .env, type its name and leave the value empty.
+                  </Typography.Paragraph>
+                  <Form.List name="keys">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map((f) => (
+                          <div key={f.key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                            <Form.Item name={[f.name, 'envName']} style={{ flex: '0 0 40%', margin: 0 }} rules={[{ pattern: ENV_NAME_RE, message: 'e.g. MY_PROVIDER_KEY_1' }]}>
+                              <Input placeholder="ENV_NAME (optional)" autoComplete="off" />
+                            </Form.Item>
+                            <Form.Item name={[f.name, 'value']} style={{ flex: 1, margin: 0 }}>
+                              <Input.Password placeholder="secret value" autoComplete="new-password" />
+                            </Form.Item>
+                            <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(f.name)} aria-label="Remove key row" />
+                          </div>
+                        ))}
+                        <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({})} style={{ marginBottom: 16 }}>
+                          Add another key
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                </>
+              )
+            }
+          </Form.Item>
+        )}
         <Form.Item
           name="dropBodyFields"
           label="Drop body fields"
@@ -612,10 +665,38 @@ function KeysModal({
 }) {
   const [form] = Form.useForm<AddKeyFormValues>();
   const { message } = App.useApp();
+  const [found, setFound] = useState<DiscoveredKey[]>([]);
+  const providerName = provider?.name;
+  const keyCount = provider?.keys.length ?? 0;
+
+  // Variables that exist in .env but are not in this provider's key pool yet.
+  useEffect(() => {
+    if (!open || !providerName) return;
+    let dead = false;
+    api<{ keys: DiscoveredKey[] }>(`/admin/env/keys?provider=${encodeURIComponent(providerName)}`)
+      .then((r) => !dead && setFound(r.keys))
+      .catch(() => !dead && setFound([]));
+    return () => {
+      dead = true;
+    };
+  }, [open, providerName, keyCount]);
 
   if (!provider) {
     return <Modal title="Keys" open={open} onCancel={onClose} footer={null} width={640} />;
   }
+
+  const attach = async (envNames: string[]) => {
+    if (!version || !envNames.length) return;
+    await act(
+      `Attach ${envNames.join(', ')}`,
+      () =>
+        api(`/admin/providers/${encodeURIComponent(provider.name)}/keys/attach`, {
+          method: 'POST',
+          body: JSON.stringify({ version, envNames }),
+        }),
+      `Attached ${envNames.length} key(s) from .env`,
+    );
+  };
 
   const addKey = async () => {
     if (!version) return;
@@ -704,6 +785,32 @@ function KeysModal({
   return (
     <Modal title={`Keys of "${provider.name}"`} open={open} onCancel={onClose} footer={null} width={640}>
       <div>
+        {provider.keyless && <Alert type="info" showIcon style={{ marginBottom: 16 }} message="This provider needs no key (auth: none)." />}
+        {found.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`${found.length} key${found.length > 1 ? 's' : ''} found in .env but not used by this provider`}
+            description={
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {found.map((k) => (
+                  <div key={k.envName} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Typography.Text code>{k.envName}</Typography.Text>
+                    {k.configured ? <Tag color="green">…{k.last4}</Tag> : <Tag>empty in .env</Tag>}
+                    <span style={{ flex: 1 }} />
+                    <Button size="small" disabled={!version} onClick={() => void attach([k.envName])}>Attach</Button>
+                  </div>
+                ))}
+                {found.length > 1 && (
+                  <Button size="small" type="primary" style={{ alignSelf: 'flex-start' }} disabled={!version} onClick={() => void attach(found.map((k) => k.envName))}>
+                    Attach all
+                  </Button>
+                )}
+              </div>
+            }
+          />
+        )}
         <Form form={form} layout="inline" style={{ marginBottom: 16 }}>
             <Form.Item
               name="envName"
@@ -837,7 +944,7 @@ function ProvidersInner() {
       width: 120,
       render: (_, p) => (
         <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => setKeysFor(p.name)}>
-          {p.keysHealthy}/{p.keysTotal} ready
+          {p.keyless ? 'no key needed' : `${p.keysHealthy}/${p.keysTotal} ready`}
         </Button>
       ),
     },

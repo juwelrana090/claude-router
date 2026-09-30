@@ -168,7 +168,18 @@
       "Bash(ROUTER_HOME=/tmp/nonexistent-router-home ./scripts/statusline)",
       "Bash(git -C . diff --stat)",
       "Bash(ls src/ui)",
-      "Bash(ls scripts/copy-ui.mjs)"
+      "Bash(ls scripts/copy-ui.mjs)",
+      "Bash(node scripts/smoke.mjs)",
+      "Bash(node scripts/admin-smoke.mjs)",
+      "Bash(rm -f /tmp/router-patches/05-*.patch)",
+      "Bash(node /tmp/router-patches/extract.mjs prompt/05-context-guard.md 05)",
+      "Bash(ls scripts/guard-smoke.mjs src/contextGuard.ts)",
+      "Bash(echo \"backend tsc exit=$?\")",
+      "Bash(echo \"web tsc exit=$?\")",
+      "Read(//Users/dalawerhossainjuwel/.claude/**)",
+      "Bash(node -e \"const s=require\\('./settings.json'\\); console.log\\('valid JSON'\\); console.log\\('AUTO_COMPACT_WINDOW =', JSON.stringify\\(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW\\)\\); console.log\\('DISABLE_1M_CONTEXT =', JSON.stringify\\(s.env.CLAUDE_CODE_DISABLE_1M_CONTEXT\\)\\); console.log\\('env keys =', Object.keys\\(s.env\\).length\\);\")",
+      "Bash(kill 12065 12046)",
+      "Bash(break)"
     ],
     "deny": [
       "Write(~/**)",
@@ -184,7 +195,8 @@
     ],
     "additionalDirectories": [
       "/tmp",
-      "/private/tmp"
+      "/private/tmp",
+      "/Users/dalawerhossainjuwel/.claude"
     ]
   }
 }

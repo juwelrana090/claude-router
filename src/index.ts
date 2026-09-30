@@ -6,8 +6,12 @@ import { once } from "node:events";
 
 import { Config, ModelCfg, PORT, ProviderCfg, ROOT, ROUTER_KEY, getCfg } from "./config";
 import { handleAdmin, hostAllowed, originAllowed } from "./admin";
+import { applyGuard, pruneGuardMemory } from "./contextGuard";
+import { canWrite, handleAuthRoutes, headerKeyOk, principal, seedAdminFromEnv, userCount } from "./auth";
+import * as history from "./history";
 import * as eta from "./eta";
 import * as live from "./live";
+import { costOf } from "./pricing";
 import { buildBody, buildHeaders, keyOrder, resolveAlias } from "./routing";
 
 if (!ROUTER_KEY) {
@@ -20,6 +24,9 @@ interface UsageTotals { in: number; out: number; cacheRead: number; cacheWrite: 
 const ZERO = (): UsageTotals => ({ in: 0, out: 0, cacheRead: 0, cacheWrite: 0 });
 const totals = new Map<string, UsageTotals & { requests: number; cost: number }>();
 fs.mkdirSync(path.join(ROOT, "logs"), { recursive: true });
+
+// Persist every finished request (success, failure, abort) to the SQLite history.
+live.setFinishHook(history.recordFinished);
 
 // ---------- helpers ----------
 function sendJSON(res: ServerResponse, status: number, data: unknown): void {
@@ -44,17 +51,11 @@ function safeEq(a: string, b: string): boolean {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function authed(req: IncomingMessage): boolean {
-  const bearer = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-  const xk = String(req.headers["x-api-key"] ?? "");
-  if (safeEq(bearer, ROUTER_KEY) || safeEq(xk, ROUTER_KEY)) return true;
-  // EventSource cannot send headers, so the live stream (and only it) may pass ?key=.
-  if (req.method === "GET") {
-    const u = new URL(req.url ?? "/", "http://localhost");
-    if (u.pathname === "/admin/events")
-      return safeEq(u.searchParams.get("key") ?? "", ROUTER_KEY);
-  }
-  return false;
+/** Legacy machine credential for the live stream: EventSource cannot set headers, so scripts may pass ?key=. */
+function sseKeyOk(req: IncomingMessage): boolean {
+  if (req.method !== "GET") return false;
+  const u = new URL(req.url ?? "/", "http://localhost");
+  return u.pathname === "/admin/events" && safeEq(u.searchParams.get("key") ?? "", ROUTER_KEY);
 }
 
 function mergeUsage(u: UsageTotals, x: any): void {
@@ -105,8 +106,7 @@ interface Timing {
 function record(
   alias: string, m: ModelCfg, keyName: string, u: UsageTotals, status: number, ms: number, timing?: Timing
 ): void {
-  const p = m.price;
-  const cost = p ? (u.in * p.in + u.out * p.out + u.cacheRead * (p.cacheRead ?? p.in)) / 1e6 : 0;
+  const cost = costOf(m.price, u);
   const t = totals.get(alias) ?? { ...ZERO(), requests: 0, cost: 0 };
   t.requests++; t.in += u.in; t.out += u.out; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite; t.cost += cost;
   totals.set(alias, t);
@@ -219,7 +219,7 @@ async function relay(
     if (track) {
       live.finishRequest(track.id, {
         alias, provider: m.provider, model: m.model, key: keyName, status: up.status,
-        ms: durationMs, ...u, cost: costOf(m, u),
+        ms: durationMs, ...u, cost: costOf(m.price, u),
         sessionId: track.sessionId ?? null, startedAt: started,
         firstTokenAt: timing.firstTokenAt, ttftMs, durationMs, outputTokensPerSec,
       });
@@ -235,12 +235,6 @@ async function relay(
       });
     }
   }
-}
-
-function costOf(m: ModelCfg, u: UsageTotals): number {
-  const p = m.price;
-  if (!p) return 0;
-  return (u.in * p.in + u.out * p.out + u.cacheRead * (p.cacheRead ?? p.in)) / 1e6;
 }
 
 async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -263,6 +257,13 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   const seed = String(meta?.user_id ?? JSON.stringify(body.system ?? "").slice(0, 4000));
   const sessionId = "u-" + crypto.createHash("sha1").update(seed).digest("hex").slice(0, 12);
   const chain = [alias, ...(c.models[alias].fallback ?? [])].filter((n) => c.models[n]);
+
+  // Context guard: clear OLD tool outputs (remembered per session) before the prompt goes upstream.
+  const guard = applyGuard(body, sessionId);
+  const upstreamBody = guard.body as Record<string, unknown>;
+  if (guard.result.saved > 0 || guard.result.clearedNow > 0) {
+    console.log(`[GUARD] ${sessionId} ${guard.result.mode}: ~${guard.result.beforeTokens} -> ~${guard.result.afterTokens} tokens (cleared ${guard.result.clearedNow} new, ${guard.result.clearedTotal} total)`);
+  }
 
   const ac = new AbortController();
   res.on("close", () => ac.abort());
@@ -303,6 +304,8 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           clientStartedAt: started,
         });
         eta.begin(track);
+        track.guardSaved = guard.result.saved;
+        track.guardWould = guard.result.would;
       } else if (track.alias !== routeName || track.keyName !== keyName) {
         // Same logical request on a new route/key: keep the live frames accurate.
         track.alias = routeName;
@@ -316,7 +319,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         up = await fetch(`${p.baseURL}/v1/messages`, {
           method: "POST",
           headers: buildHeaders(req, p, keyName),
-          body: buildBody(body, m, p),
+          body: buildBody(upstreamBody, m, p),
           signal: ac.signal,
         });
       } catch (e) {
@@ -381,7 +384,7 @@ function serveUI(res: ServerResponse): void {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
     "content-security-policy":
-      "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'",
+      "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; form-action 'none'; base-uri 'none'",
   });
   res.end(html);
 }
@@ -420,8 +423,13 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && p === "/health") return sendJSON(res, 200, { status: "ok" });
 
-    // UI shell: no secrets inside it, so it loads before the key prompt.
-    if (req.method === "GET" && (p === "/ui" || p === "/ui/index.html")) {
+    if (req.method === "GET" && p === "/") {
+      res.writeHead(302, { location: "/ui/live" });
+      return void res.end();
+    }
+
+    // UI shell (no secrets inside): every /ui/* path is a client-side route, so a refresh keeps the page.
+    if (req.method === "GET" && (p === "/ui" || p.startsWith("/ui/"))) {
       if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
       return serveUI(res);
     }
@@ -433,11 +441,21 @@ const server = http.createServer(async (req, res) => {
       return fail(res, 404, "not_found_error", "Not found");
     }
 
-    if (!authed(req)) return fail(res, 401, "authentication_error", "Invalid router key");
+    // Sign-in, first-run setup and user management (own auth checks inside).
+    if (await handleAuthRoutes(req, res, p, ROUTER_KEY, { hostOk: hostAllowed(req), originOk: originAllowed(req) })) return;
+
+    const isAdminPath = p === "/admin" || p.startsWith("/admin/");
+    // /v1/* stays header-key only (Claude Code). /admin/* also accepts a signed-in browser session.
+    const who = isAdminPath ? principal(req, ROUTER_KEY) ?? (sseKeyOk(req) ? ({ kind: "key" } as const) : null)
+                            : headerKeyOk(req, ROUTER_KEY) ? ({ kind: "key" } as const) : null;
+    if (!who) return fail(res, 401, "authentication_error", isAdminPath ? "Sign in required" : "Invalid router key");
     if (!hostAllowed(req)) return fail(res, 403, "forbidden_error", "Host header not allowed");
     const stateChanging = req.method !== "GET" && req.method !== "HEAD";
     if (stateChanging && !originAllowed(req)) {
       return fail(res, 403, "forbidden_error", "Cross-origin request refused");
+    }
+    if (isAdminPath && stateChanging && !canWrite(who)) {
+      return fail(res, 403, "forbidden_error", "Read-only account: ask an admin to make this change");
     }
 
     if (p === "/admin/status") {
@@ -492,6 +510,14 @@ server.requestTimeout = 0; // long streaming responses must not be cut
 // The rings are seeded before the port opens: a request in the first moments
 // after restart must not get etaMs=null ("estimating...") against a populated
 // usage log. An unreadable log degrades to empty history, not a crash.
+seedAdminFromEnv();
+{
+  const n = history.backfillFromJsonl();
+  if (n) console.log(`[HISTORY] imported ${n} requests from logs/usage.jsonl`);
+  history.pruneOld();
+  pruneGuardMemory();
+  setInterval(() => { history.pruneOld(); pruneGuardMemory(); }, 6 * 3600_000).unref();
+}
 eta.seedHistory()
   .catch((e) => console.warn("[ETA] usage log unreadable -> seeding with empty history:",
     e instanceof Error ? e.message : String(e)))
@@ -504,6 +530,6 @@ eta.seedHistory()
         const ok = !p ? "NO PROVIDER" : p.disabled ? "DISABLED" : keyOrder(p, m, "x").length ? "ok" : "NO KEY";
         console.log(`  ${name.padEnd(10)} ${m.provider}/${m.model}  [${ok}]`);
       }
-      console.log(`\n  UI (needs ROUTER_KEY):  http://127.0.0.1:${PORT}/ui\n`);
+      console.log(`\n  UI:  http://127.0.0.1:${PORT}/ui  ${userCount() === 0 ? "(open it to create the first admin account)" : "(sign in)"}\n`);
     });
   });

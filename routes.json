@@ -38,6 +38,16 @@
       "keys": [
         "OPENCODE_ZEN_KEY_1"
       ]
+    },
+    "ollama": {
+      "baseURL": "https://ollama.com/api/chat",
+      "auth": "both",
+      "keys": [],
+      "dropBeta": false,
+      "dropBodyFields": [
+        "ollama"
+      ],
+      "disabled": false
     }
   },
   "models": {
@@ -93,6 +103,10 @@
       "provider": "opencode",
       "model": "space-bunny-free",
       "key": "OPENCODE_ZEN_KEY_1"
+    },
+    "deepseek-v4.1-flash": {
+      "provider": "ollama",
+      "model": "deepseek-v4.1-flash"
     }
   }
 }

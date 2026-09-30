@@ -21,7 +21,12 @@ export function resolveAlias(c: Config, raw: string): string | undefined {
 }
 
 // Sticky key choice keeps the provider-side prompt cache warm (cache is per account/key).
+/** Pseudo key name for providers that need no key (auth "none", e.g. a local Ollama). */
+export const KEYLESS_PREFIX = "(no key) ";
+export const keylessName = (provider: string): string => `${KEYLESS_PREFIX}${provider}`;
+
 export function keyOrder(p: ProviderCfg, m: ModelCfg, seed: string): string[] {
+  if (p.auth === "none") return [keylessName(m.provider)];
   if (m.key) return process.env[m.key] ? [m.key] : [];
   const names = p.keys.filter((k) => process.env[k]);
   if (!names.length) return [];
@@ -34,7 +39,7 @@ export function buildHeaders(
   p: ProviderCfg,
   keyName: string
 ): Record<string, string> {
-  const key = process.env[keyName] as string;
+  const key = (process.env[keyName] ?? "") as string;
   const h: Record<string, string> = {
     "content-type": "application/json",
     "anthropic-version": headerValue(req.headers["anthropic-version"]) || "2023-06-01",

@@ -5,7 +5,9 @@ import { ThemeProvider } from '@lobehub/ui';
 import { ConfigProvider, theme as antdTheme } from 'antd';
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { AuthProvider } from './auth';
 import { GLOBAL_CSS, buildTheme, cssVars } from './designTokens';
 import { ThemeModeProvider, loadThemeMode, saveThemeMode, type ThemeMode } from './theme';
 
@@ -40,7 +42,11 @@ function Root() {
             if (next === 'dark' || next === 'light') setMode(next);
           }}
         >
-          <App />
+          <BrowserRouter basename="/ui">
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </BrowserRouter>
         </ThemeProvider>
       </ConfigProvider>
     </ThemeModeProvider>

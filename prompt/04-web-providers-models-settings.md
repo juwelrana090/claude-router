@@ -1,3 +1,32 @@
+# 04 — Providers (keys), Models, Settings
+
+**Run after 03.** Changes `src/web/` only.
+
+## What this step adds and why
+
+- **Providers**: the Add-provider form now takes **API keys** (one or many rows; the name is optional and auto-generated; or attach an existing `.env` name), has auth mode **`none`** for keyless local servers, and the Keys dialog lists variables found in `.env` that the provider does not use yet, with **Attach / Attach all**. This is why your `OPENCODE_KEY_2..4` were invisible: a provider only uses the variable names listed in `routes.json`.
+- **Models**: the price form keeps and edits the "peak hours" flag.
+- **Settings**: seven tabs, one URL each — General (project name, large-prompt limit, history retention), Routing (default model; where opus/sonnet/haiku go), **Pricing** (estimates, DeepSeek list-price preset, peak multiplier), **Claude Code** (the token-saving settings), Account (change password), System (version, uptime, paths, health checks), Data (history size, clear).
+
+## How to work (read this first)
+
+- This file is **complete**. Everything you need is below. **Do not open, search or read any other file or folder.**
+  If a step says "replace the whole file" you do not need to read the old one. If a step is a diff, open **only that one file** to apply it.
+- Diffs are unified diffs with 3 lines of context. Apply each from the repo root with
+  `git apply --ignore-whitespace --whitespace=nowarn <file.patch>` (save the block to a `.patch` file first), or edit by hand: `-` lines are removed, `+` lines are added, everything else is context.
+  If a hunk does not match because the line already looks like the `+` version, skip that hunk and say so.
+- Files in this repo use Windows line endings (CRLF). Keep each existing file's line endings. New files may use either.
+- Do not change anything that is not listed. No refactors, no renames, no formatting changes.
+- Never print, log, or commit `.env` values.
+- When done, run the verification commands at the end and paste their **real output**. If one fails, fix only what the failure points to, then re-run it.
+
+## Steps
+
+### Step 1 — Replace this file completely
+
+### `src/web/src/pages/Settings.tsx` — REPLACE the whole file
+
+````tsx
 /**
  * Settings, one URL per tab: /settings/general | routing | pricing | claude-code | account | system | data
  */
@@ -13,9 +42,9 @@ import { useAppSettings } from '../appSettings';
 import { useAuth } from '../auth';
 import { fmtBytes, fmtCompact, fmtDateTime, fmtExact, fmtUptime } from '../format';
 import { useThemeToggle } from '../theme';
-import type { Insights, ModelRow } from '../types';
+import type { ModelRow } from '../types';
 
-const TABS = ['general', 'routing', 'pricing', 'guard', 'claude-code', 'account', 'system', 'data'] as const;
+const TABS = ['general', 'routing', 'pricing', 'claude-code', 'account', 'system', 'data'] as const;
 type Tab = (typeof TABS)[number];
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -37,7 +66,7 @@ export default function SettingsPage() {
   if (!(TABS as readonly string[]).includes(tab)) return <Navigate to="/settings/general" replace />;
   const active = tab as Tab;
   const labels: Record<Tab, string> = {
-    general: 'General', routing: 'Routing', pricing: 'Pricing', guard: 'Context guard', 'claude-code': 'Claude Code', account: 'Account', system: 'System', data: 'Data',
+    general: 'General', routing: 'Routing', pricing: 'Pricing', 'claude-code': 'Claude Code', account: 'Account', system: 'System', data: 'Data',
   };
   return (
     <div>
@@ -52,7 +81,6 @@ export default function SettingsPage() {
         {active === 'general' && <General />}
         {active === 'routing' && <Routing />}
         {active === 'pricing' && <Pricing />}
-        {active === 'guard' && <Guard />}
         {active === 'claude-code' && <ClaudeCode />}
         {active === 'account' && <Account />}
         {active === 'system' && <System />}
@@ -201,73 +229,6 @@ function Pricing() {
   );
 }
 
-// ---------- Context guard ----------
-function Guard() {
-  const { message } = App.useApp();
-  const { isAdmin } = useAuth();
-  const { settings, reload } = useAppSettings();
-  const [ins, setIns] = useState<Insights | null>(null);
-  const [form] = Form.useForm();
-  useEffect(() => { form.setFieldsValue(settings); }, [settings, form]);
-  useEffect(() => { void api<Insights>('/admin/insights?range=24h').then(setIns).catch(() => undefined); }, []);
-
-  const save = async (v: Record<string, unknown>) => {
-    try {
-      await api('/admin/app-settings', { method: 'PUT', body: JSON.stringify({ settings: v }) });
-      await reload();
-      message.success('Saved');
-    } catch (e) { message.error(cleanErr(e)); }
-  };
-
-  const g = ins?.guard;
-  const raw = g ? g.input + g.saved : 0;
-  const pct = g && raw > 0 ? ((g.saved + g.would) / raw) * 100 : 0;
-  return (
-    <>
-      <Section
-        title="Why this exists"
-        description={<>The model has no memory between requests, so Claude Code sends the whole conversation every time. That cannot be avoided, but most of that conversation is <b>old tool output</b> (files it read, search results, command logs) that the model no longer needs in full. The guard replaces old tool outputs with a one-line note and keeps the newest few. It <b>remembers</b> what it cleared in each session, so later requests get exactly the same notes and the provider's cache keeps working. Clearing happens in rare batches: when the prompt passes the upper limit it is cleared down to the lower limit.</>}
-      >
-        <Typography.Text type="secondary">
-          Research on coding agents (JetBrains, 2025) found this simple approach roughly halves cost while solving as many tasks as summarising with a second model. The risk: the agent may re-read a file it needs again. Start in <b>Measure only</b>, look at the number below, then switch on.
-        </Typography.Text>
-      </Section>
-      <Section title="Result (last 24 hours)">
-        {!g || (g.saved === 0 && g.would === 0) ? (
-          <Alert type="info" showIcon message="Nothing measured yet" description="It starts counting when a prompt grows past the upper limit. Use Claude Code normally and check back." />
-        ) : (
-          <Descriptions size="small" column={1} bordered>
-            <Descriptions.Item label="Requests affected">{fmtExact(g.requests)}</Descriptions.Item>
-            {g.saved > 0 && <Descriptions.Item label="Tokens removed from prompts">{fmtCompact(g.saved)} ({fmtExact(g.saved)})</Descriptions.Item>}
-            {g.would > 0 && <Descriptions.Item label="Tokens it would remove (measure only)">{fmtCompact(g.would)} ({fmtExact(g.would)})</Descriptions.Item>}
-            <Descriptions.Item label="Share of those prompts">{pct.toFixed(0)}% smaller</Descriptions.Item>
-          </Descriptions>
-        )}
-      </Section>
-      <Section title="Settings">
-        <Form form={form} layout="vertical" disabled={!isAdmin} requiredMark={false} onFinish={save}>
-          <Form.Item name="guard.mode" label="Mode">
-            <Segmented options={[{ value: 'off', label: 'Off' }, { value: 'shadow', label: 'Measure only' }, { value: 'on', label: 'On' }]} />
-          </Form.Item>
-          <Form.Item name="guard.highTokens" label="Start clearing above (tokens)" tooltip="Estimated prompt size that triggers a clearing batch." rules={[{ required: true, type: 'number', min: 20000, max: 2000000 }]}>
-            <InputNumber style={{ width: 200 }} step={10000} min={20000} />
-          </Form.Item>
-          <Form.Item name="guard.lowTokens" label="Clear down to (tokens)" tooltip="Must be lower than the upper limit. A bigger gap means fewer batches and fewer cache misses." rules={[{ required: true, type: 'number', min: 5000, max: 1000000 }]}>
-            <InputNumber style={{ width: 200 }} step={5000} min={5000} />
-          </Form.Item>
-          <Form.Item name="guard.keepRecent" label="Always keep the newest tool outputs" rules={[{ required: true, type: 'number', min: 1, max: 50 }]}>
-            <InputNumber style={{ width: 200 }} min={1} max={50} />
-          </Form.Item>
-          <Form.Item name="guard.minChars" label="Ignore outputs shorter than (characters)" rules={[{ required: true, type: 'number', min: 200, max: 100000 }]}>
-            <InputNumber style={{ width: 200 }} step={100} min={200} />
-          </Form.Item>
-          {isAdmin && <Button type="primary" htmlType="submit">Save</Button>}
-        </Form>
-      </Section>
-    </>
-  );
-}
-
 // ---------- Claude Code (token efficiency) ----------
 const ENV_SNIPPET = `"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
 "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1"`;
@@ -402,3 +363,265 @@ function Data() {
     </>
   );
 }
+````
+
+### Step 2 — Apply these diffs
+
+### `src/web/src/pages/Providers.tsx` — keys on create, keyless mode, attach from .env
+
+````diff
+--- a/src/web/src/pages/Providers.tsx
++++ b/src/web/src/pages/Providers.tsx
+@@ -92,7 +92,7 @@
+ 
+ // ---------- Accurate admin view types (server shapes) ----------
+ 
+-export type AuthMode = 'bearer' | 'x-api-key' | 'both';
++export type AuthMode = 'bearer' | 'x-api-key' | 'both' | 'none';
+ 
+ export interface AdminKeyView {
+   envName: string;
+@@ -110,6 +110,7 @@
+   dropBeta: boolean;
+   dropBodyFields: string[];
+   disabled: boolean;
++  keyless?: boolean;
+   keys: AdminKeyView[];
+   keysTotal: number;
+   keysHealthy: number;
+@@ -418,8 +419,17 @@
+   { value: 'bearer', label: 'bearer' },
+   { value: 'x-api-key', label: 'x-api-key' },
+   { value: 'both', label: 'both' },
++  { value: 'none', label: 'none (no key needed, e.g. a local Ollama)' },
+ ];
+ 
++interface DiscoveredKey {
++  envName: string;
++  configured: boolean;
++  last4: string;
++  attachedTo: string | null;
++  suggestedProvider: string | null;
++}
++
+ // ---------- Provider add/edit modal ----------
+ 
+ interface ProviderFormValues {
+@@ -429,6 +439,7 @@
+   dropBeta: boolean;
+   dropBodyFields?: string[];
+   disabled: boolean;
++  keys?: { envName?: string; value?: string }[];
+ }
+ 
+ function ProviderFormModal({
+@@ -460,7 +471,7 @@
+             dropBodyFields: provider.dropBodyFields,
+             disabled: provider.disabled,
+           }
+-        : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false },
++        : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false, keys: [{}] },
+     );
+     // Only on open / different provider: the 20s snapshot poll swaps the `provider` object and
+     // would otherwise reset the form under the user's hands.
+@@ -496,6 +507,12 @@
+             dropBeta: values.dropBeta,
+             dropBodyFields: values.dropBodyFields ?? [],
+             disabled: values.disabled,
++            keys:
++              values.auth === 'none'
++                ? []
++                : (values.keys ?? [])
++                    .filter((k) => k && (k.value || k.envName))
++                    .map((k) => ({ envName: k.envName?.trim() || undefined, value: k.value?.trim() || undefined })),
+           }),
+         }),
+       );
+@@ -536,6 +553,42 @@
+         <Form.Item name="auth" label="Auth mode" rules={[{ required: true }]}>
+           <Select options={AUTH_MODE_OPTIONS} />
+         </Form.Item>
++        {!isEdit && (
++          <Form.Item noStyle shouldUpdate={(a, b) => a.auth !== b.auth}>
++            {({ getFieldValue }) =>
++              getFieldValue('auth') === 'none' ? (
++                <Alert type="info" showIcon style={{ marginBottom: 16 }} message="No key needed" description="Requests are sent without an Authorization header. Use this for a local server such as Ollama or LM Studio." />
++              ) : (
++                <>
++                  <Typography.Text strong>API keys</Typography.Text>
++                  <Typography.Paragraph type="secondary" style={{ margin: '2px 0 8px' }}>
++                    Paste one or more keys. Each is written to .env only and never shown again. Leave the name empty to get an automatic one such as MY_PROVIDER_KEY_1. To attach a variable that already exists in .env, type its name and leave the value empty.
++                  </Typography.Paragraph>
++                  <Form.List name="keys">
++                    {(fields, { add, remove }) => (
++                      <>
++                        {fields.map((f) => (
++                          <div key={f.key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
++                            <Form.Item name={[f.name, 'envName']} style={{ flex: '0 0 40%', margin: 0 }} rules={[{ pattern: ENV_NAME_RE, message: 'e.g. MY_PROVIDER_KEY_1' }]}>
++                              <Input placeholder="ENV_NAME (optional)" autoComplete="off" />
++                            </Form.Item>
++                            <Form.Item name={[f.name, 'value']} style={{ flex: 1, margin: 0 }}>
++                              <Input.Password placeholder="secret value" autoComplete="new-password" />
++                            </Form.Item>
++                            <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(f.name)} aria-label="Remove key row" />
++                          </div>
++                        ))}
++                        <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({})} style={{ marginBottom: 16 }}>
++                          Add another key
++                        </Button>
++                      </>
++                    )}
++                  </Form.List>
++                </>
++              )
++            }
++          </Form.Item>
++        )}
+         <Form.Item
+           name="dropBodyFields"
+           label="Drop body fields"
+@@ -612,11 +665,39 @@
+ }) {
+   const [form] = Form.useForm<AddKeyFormValues>();
+   const { message } = App.useApp();
++  const [found, setFound] = useState<DiscoveredKey[]>([]);
++  const providerName = provider?.name;
++  const keyCount = provider?.keys.length ?? 0;
++
++  // Variables that exist in .env but are not in this provider's key pool yet.
++  useEffect(() => {
++    if (!open || !providerName) return;
++    let dead = false;
++    api<{ keys: DiscoveredKey[] }>(`/admin/env/keys?provider=${encodeURIComponent(providerName)}`)
++      .then((r) => !dead && setFound(r.keys))
++      .catch(() => !dead && setFound([]));
++    return () => {
++      dead = true;
++    };
++  }, [open, providerName, keyCount]);
+ 
+   if (!provider) {
+     return <Modal title="Keys" open={open} onCancel={onClose} footer={null} width={640} />;
+   }
+ 
++  const attach = async (envNames: string[]) => {
++    if (!version || !envNames.length) return;
++    await act(
++      `Attach ${envNames.join(', ')}`,
++      () =>
++        api(`/admin/providers/${encodeURIComponent(provider.name)}/keys/attach`, {
++          method: 'POST',
++          body: JSON.stringify({ version, envNames }),
++        }),
++      `Attached ${envNames.length} key(s) from .env`,
++    );
++  };
++
+   const addKey = async () => {
+     if (!version) return;
+     const { envName, value } = await form.validateFields();
+@@ -704,6 +785,32 @@
+   return (
+     <Modal title={`Keys of "${provider.name}"`} open={open} onCancel={onClose} footer={null} width={640}>
+       <div>
++        {provider.keyless && <Alert type="info" showIcon style={{ marginBottom: 16 }} message="This provider needs no key (auth: none)." />}
++        {found.length > 0 && (
++          <Alert
++            type="warning"
++            showIcon
++            style={{ marginBottom: 16 }}
++            message={`${found.length} key${found.length > 1 ? 's' : ''} found in .env but not used by this provider`}
++            description={
++              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
++                {found.map((k) => (
++                  <div key={k.envName} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
++                    <Typography.Text code>{k.envName}</Typography.Text>
++                    {k.configured ? <Tag color="green">…{k.last4}</Tag> : <Tag>empty in .env</Tag>}
++                    <span style={{ flex: 1 }} />
++                    <Button size="small" disabled={!version} onClick={() => void attach([k.envName])}>Attach</Button>
++                  </div>
++                ))}
++                {found.length > 1 && (
++                  <Button size="small" type="primary" style={{ alignSelf: 'flex-start' }} disabled={!version} onClick={() => void attach(found.map((k) => k.envName))}>
++                    Attach all
++                  </Button>
++                )}
++              </div>
++            }
++          />
++        )}
+         <Form form={form} layout="inline" style={{ marginBottom: 16 }}>
+             <Form.Item
+               name="envName"
+@@ -837,7 +944,7 @@
+       width: 120,
+       render: (_, p) => (
+         <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => setKeysFor(p.name)}>
+-          {p.keysHealthy}/{p.keysTotal} ready
++          {p.keyless ? 'no key needed' : `${p.keysHealthy}/${p.keysTotal} ready`}
+         </Button>
+       ),
+     },
+````
+
+### `src/web/src/pages/Models.tsx` — peak flag in the price form
+
+````diff
+--- a/src/web/src/pages/Models.tsx
++++ b/src/web/src/pages/Models.tsx
+@@ -19,6 +19,7 @@
+   Modal,
+   Select,
+   Space,
++  Switch,
+   Table,
+   Tag,
+   Tooltip,
+@@ -49,7 +50,7 @@
+   key?: string;
+   maxOutputTokens?: number | null;
+   fallback?: string[];
+-  price?: { in?: number | null; out?: number | null; cacheRead?: number | null };
++  price?: { in?: number | null; out?: number | null; cacheRead?: number | null; peak?: boolean };
+ }
+ 
+ function ModelFormModal({
+@@ -83,7 +84,7 @@
+             maxOutputTokens: model.maxOutputTokens ?? null,
+             fallback: model.fallback,
+             price: model.price
+-              ? { in: model.price.in, out: model.price.out, cacheRead: model.price.cacheRead ?? null }
++              ? { in: model.price.in, out: model.price.out, cacheRead: model.price.cacheRead ?? null, peak: !!(model.price as { peak?: boolean }).peak }
+               : { in: null, out: null, cacheRead: null },
+           }
+         : {},
+@@ -108,6 +109,7 @@
+             in: values.price.in,
+             out: values.price.out,
+             ...(values.price.cacheRead != null ? { cacheRead: values.price.cacheRead } : {}),
++            ...(values.price.peak ? { peak: true } : {}),
+           }
+         : undefined;
+     const body = {
+@@ -214,6 +216,9 @@
+             </Form.Item>
+           </Space.Compact>
+         </Form.Item>
++        <Form.Item name={['price', 'peak']} valuePropName="checked" style={{ margin: '8px 0 0' }}>
++          <Switch size="small" /> <Typography.Text type="secondary" style={{ fontSize: 12 }}>Provider charges more in peak hours (DeepSeek). Multiplier is set in Settings &gt; Pricing.</Typography.Text>
++        </Form.Item>
+         <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
+           Leave price or max output tokens empty to remove them. Fallbacks are tried in the order listed, one level deep.
+         </Typography.Paragraph>
+````
+
+## Verify (after 01, 02, 03 and 04 are all applied)
+
+```bash
+cd src/web && npx tsc --noEmit    # expect: no output
+cd ../.. && npm run build         # expect: "built in ..." and dist/ui/index.html
+node scripts/smoke.mjs && node scripts/admin-smoke.mjs   # expect: ALL PASSED twice
+```
+Then restart the router (PM2 or `npm run serve`) and hard-refresh the browser once. Open `http://127.0.0.1:21450/ui`, create the admin account, then check: the sidebar on the left, `/ui/history` shows your old requests, refreshing `/ui/usage` stays on Usage, Providers > Add provider shows key rows, Providers > opencode > Keys shows your `.env` keys to attach.
+
+What I checked on exactly this code with a real headless Chromium against the built app: first-run setup → create admin → lands on `/ui/live`; wrong password shows "Invalid username or password"; opening `/ui/providers` while signed out returns to `/ui/providers` after sign-in; reload keeps `/ui/usage`; every page and all 7 settings tabs render; Add-provider dialog shows key rows; light theme works; global search opens; **no page errors** (the only console error is the expected 401 from the wrong password). I could not watch the gauge move during a long live request in that sandbox, so check it once on a real Claude Code request.

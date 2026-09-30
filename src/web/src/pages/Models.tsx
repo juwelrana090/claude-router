@@ -19,6 +19,7 @@ import {
   Modal,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -49,7 +50,7 @@ interface ModelFormValues {
   key?: string;
   maxOutputTokens?: number | null;
   fallback?: string[];
-  price?: { in?: number | null; out?: number | null; cacheRead?: number | null };
+  price?: { in?: number | null; out?: number | null; cacheRead?: number | null; peak?: boolean };
 }
 
 function ModelFormModal({
@@ -83,7 +84,7 @@ function ModelFormModal({
             maxOutputTokens: model.maxOutputTokens ?? null,
             fallback: model.fallback,
             price: model.price
-              ? { in: model.price.in, out: model.price.out, cacheRead: model.price.cacheRead ?? null }
+              ? { in: model.price.in, out: model.price.out, cacheRead: model.price.cacheRead ?? null, peak: !!(model.price as { peak?: boolean }).peak }
               : { in: null, out: null, cacheRead: null },
           }
         : {},
@@ -108,6 +109,7 @@ function ModelFormModal({
             in: values.price.in,
             out: values.price.out,
             ...(values.price.cacheRead != null ? { cacheRead: values.price.cacheRead } : {}),
+            ...(values.price.peak ? { peak: true } : {}),
           }
         : undefined;
     const body = {
@@ -213,6 +215,9 @@ function ModelFormModal({
               <InputNumber min={0} step={0.01} style={{ width: '34%' }} placeholder="cache read" addonBefore="$" />
             </Form.Item>
           </Space.Compact>
+        </Form.Item>
+        <Form.Item name={['price', 'peak']} valuePropName="checked" style={{ margin: '8px 0 0' }}>
+          <Switch size="small" /> <Typography.Text type="secondary" style={{ fontSize: 12 }}>Provider charges more in peak hours (DeepSeek). Multiplier is set in Settings &gt; Pricing.</Typography.Text>
         </Form.Item>
         <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
           Leave price or max output tokens empty to remove them. Fallbacks are tried in the order listed, one level deep.

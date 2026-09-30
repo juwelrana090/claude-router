@@ -20,6 +20,9 @@ export interface InFlight {
   etaMs?: number | null;
   expectedOutputTokens?: number | null;
   streamError?: boolean;
+  // context guard numbers for the history row
+  guardSaved?: number;
+  guardWould?: number;
 }
 
 export interface RecentEntry {
@@ -181,6 +184,12 @@ export function setFailover(id: string, from: { from: string; status: number; re
   });
 }
 
+// Persistence hook (history.ts registers it; kept as a hook so live.ts has no database dependency).
+let onFinish: ((id: string, e: RecentEntry, f?: InFlight) => void) | undefined;
+export function setFinishHook(fn: (id: string, e: RecentEntry, f?: InFlight) => void): void {
+  onFinish = fn;
+}
+
 export function finishRequest(id: string, entry: Omit<RecentEntry, "ts" | "failover">): void {
   if (!id) return;
   guard("finish", () => {
@@ -188,6 +197,7 @@ export function finishRequest(id: string, entry: Omit<RecentEntry, "ts" | "failo
     inFlight.delete(id);
     const full: RecentEntry = { ts: Date.now(), ...entry, failover: f?.failover };
     if (full.failover === undefined) delete full.failover;
+    onFinish?.(id, full, f);
     recent.push(full);
     while (recent.length > RECENT_MAX) recent.shift();
     lastUsedByProvider.set(full.provider, Date.now());
@@ -219,6 +229,13 @@ export function finishRequest(id: string, entry: Omit<RecentEntry, "ts" | "failo
       tokensPerSec: full.outputTokensPerSec
         ?? (full.ms > 0 && full.out > 0 ? Math.round((full.out / (full.ms / 1000)) * 100) / 100 : null),
       failover: full.failover ?? null,
+      // Token counts ride the terminal frame so the UI can show a finished row without a refetch.
+      httpStatus: full.status,
+      inTokens: full.in,
+      cacheRead: full.cacheRead,
+      cacheWrite: full.cacheWrite,
+      ctxTokens: full.in + full.cacheRead + full.cacheWrite,
+      cost: full.cost,
     });
     broadcast("finish", full);
   });
