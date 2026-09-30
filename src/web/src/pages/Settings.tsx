@@ -2,11 +2,11 @@
  * Settings, one URL per tab: /settings/general | routing | pricing | claude-code | account | system | data
  */
 import { CopyOutlined } from '@ant-design/icons';
-import { Snippet } from '@lobehub/ui';
+import { Highlighter } from '@lobehub/ui';
 import {
-  Alert, App, Button, Card, Descriptions, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Table, Tabs, Tag, Typography,
+  Alert, App, Button, Card, Descriptions, Form, Input, InputNumber, Popconfirm, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography,
 } from 'antd';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api, fetchEtaSnapshot, fetchSnapshot } from '../api';
 import { useAppSettings } from '../appSettings';
@@ -15,7 +15,7 @@ import { fmtBytes, fmtCompact, fmtDateTime, fmtExact, fmtUptime } from '../forma
 import { useThemeToggle } from '../theme';
 import type { Insights, ModelRow } from '../types';
 
-const TABS = ['general', 'routing', 'pricing', 'guard', 'claude-code', 'account', 'system', 'data'] as const;
+const TABS = ['general', 'routing', 'pricing', 'guard', 'memory', 'claude-code', 'account', 'system', 'data'] as const;
 type Tab = (typeof TABS)[number];
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -37,7 +37,7 @@ export default function SettingsPage() {
   if (!(TABS as readonly string[]).includes(tab)) return <Navigate to="/settings/general" replace />;
   const active = tab as Tab;
   const labels: Record<Tab, string> = {
-    general: 'General', routing: 'Routing', pricing: 'Pricing', guard: 'Context guard', 'claude-code': 'Claude Code', account: 'Account', system: 'System', data: 'Data',
+    general: 'General', routing: 'Routing', pricing: 'Pricing', guard: 'Context guard', memory: 'Memory', 'claude-code': 'Claude Code', account: 'Account', system: 'System', data: 'Data',
   };
   return (
     <div>
@@ -52,7 +52,8 @@ export default function SettingsPage() {
         {active === 'general' && <General />}
         {active === 'routing' && <Routing />}
         {active === 'pricing' && <Pricing />}
-        {active === 'guard' && <Guard />}
+          {active === 'guard' && <Guard />}
+        {active === 'memory' && <Memory />}
         {active === 'claude-code' && <ClaudeCode />}
         {active === 'account' && <Account />}
         {active === 'system' && <System />}
@@ -288,6 +289,15 @@ function Guard() {
           <Form.Item name="guard.minChars" label="Ignore outputs shorter than (characters)" rules={[{ required: true, type: 'number', min: 200, max: 100000 }]}>
             <InputNumber style={{ width: 200 }} step={100} min={200} />
           </Form.Item>
+          <Form.Item name="guard.trimInputs" label="Also shrink old tool calls" valuePropName="checked" tooltip="When an old tool output is cleared, the big text inside the matching tool CALL (for example the whole file body of an old Write) is shortened too. The file path and the other fields stay.">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="guard.trimPastes" label="Shrink big pasted text in old messages" valuePropName="checked" tooltip="Your own old messages that contain a very large paste (a log, a file) keep their first 1500 and last 500 characters. Your first message and your newest two are never touched. Off by default because it edits what you wrote.">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="guard.pasteChars" label="A paste counts as big above (characters)" rules={[{ required: true, type: 'number', min: 2000, max: 200000 }]}>
+            <InputNumber style={{ width: 200 }} step={1000} min={2000} />
+          </Form.Item>
           {isAdmin && <Button type="primary" htmlType="submit">Save</Button>}
         </Form>
       </Section>
@@ -295,28 +305,212 @@ function Guard() {
   );
 }
 
-// ---------- Claude Code (token efficiency) ----------
-const ENV_SNIPPET = `"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
-"CLAUDE_CODE_DISABLE_1M_CONTEXT": "1"`;
-const STATUSLINE_SNIPPET = '{"statusLine": { "type": "command", "command": "node \\"/absolute/path/to/claude-router/scripts/statusline.mjs\\"" } }';
+// ---------- Memory (rolling summaries) ----------
+interface MemoryRow { sessionId: string; covers: number; summaryTokens: number; sourceTokens: number; model: string; cost: number; createdAt: number; summary: string; versions: number }
+interface MemoryData { summaries: MemoryRow[]; stats: Insights['memory'] }
 
-function ClaudeCode() {
+function Memory() {
+  const { message, modal } = App.useApp();
+  const { isAdmin } = useAuth();
+  const { settings, reload } = useAppSettings();
+  const [data, setData] = useState<MemoryData | null>(null);
+  const [aliases, setAliases] = useState<string[]>([]);
+  const [form] = Form.useForm();
+  const load = useCallback(async () => { setData(await api<MemoryData>('/admin/memory')); }, []);
+  useEffect(() => { void load(); void api<{ models: { alias: string }[] }>('/admin/models').then((r) => setAliases(r.models.map((m) => m.alias))); }, [load]);
+  useEffect(() => { form.setFieldsValue(settings); }, [settings, form]);
+  const save = async (v: Record<string, unknown>) => {
+    try {
+      await api('/admin/app-settings', { method: 'PUT', body: JSON.stringify({ settings: v }) });
+      await reload();
+      message.success('Saved');
+    } catch (e) { message.error(cleanErr(e)); }
+  };
+  const st = data?.stats;
   return (
     <>
       <Section
-        title="Keep prompts small (the biggest token saving)"
-        description={<>Claude Code re-sends the whole conversation on every request. The bigger the conversation, the more tokens each request costs, even when most of it is cached. Ask it to summarise earlier, at a size you choose, instead of waiting for the model's full window. Add these two lines inside the <code>"env"</code> block of <code>~/.claude/settings.json</code>:</>}
+        title="What this is"
+        description={<>The AI model has no memory, so Claude Code sends the whole conversation every time. <b>Router memory</b> remembers for it: when a conversation gets long, a cheap model writes a short summary of the <b>old</b> messages (in the background, so nothing waits). The router stores that summary and, from the next request on, sends it <b>instead of</b> the old messages. The text is the same on every request, so the provider's cache keeps working. Your original request is kept word for word, and the newest messages are never summarised. If the summary model fails, your request goes out unchanged and the router tries again after 5 minutes.</>}
       >
-        <Snippet language="json">{ENV_SNIPPET}</Snippet>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
-          The value must be a plain number (write 120000, not 120k). You can also run <code>/autocompact 120k</code> once inside Claude Code, which saves the same setting.
-          Then watch <Link to="/live">Live</Link> and <Link to="/usage">Usage</Link>: the “Context size” numbers should stop climbing past roughly 90k.
-          Use <code>/clear</code> between unrelated tasks and <code>/compact</code> after a big task. Run <code>/context</code> to see what fills the window.
+        <Typography.Text type="secondary">
+          Cost and risk: each summary costs a one-time call to the summary model (shown in History as “router memory summary”), and a summary can lose small details. Start with <b>Measure only</b>, read the number below, then switch on. It only works inside one conversation; after <code>/clear</code> a new conversation starts empty, as it should.
+        </Typography.Text>
+      </Section>
+      <Section title="Result (last 24 hours)">
+        {!st || (st.saved === 0 && st.would === 0 && st.summaries === 0) ? (
+          <Alert type="info" showIcon message="Nothing yet" description="It starts when a conversation passes the upper limit below." />
+        ) : (
+          <Descriptions size="small" column={1} bordered>
+            {st.saved > 0 && <Descriptions.Item label="Tokens removed from prompts">{fmtCompact(st.saved)} ({fmtExact(st.saved)}) over {fmtExact(st.requests)} requests</Descriptions.Item>}
+            {st.would > 0 && <Descriptions.Item label="Tokens it would remove (measure only)">{fmtCompact(st.would)} ({fmtExact(st.would)})</Descriptions.Item>}
+            <Descriptions.Item label="Summaries written">{st.summaries}{st.summaries ? ` (read ${fmtCompact(st.summarisedTokens)} tokens, wrote ${fmtCompact(st.summaryTokens)})` : ''}</Descriptions.Item>
+            {st.cost > 0 && <Descriptions.Item label="Summary cost (estimate)">${st.cost.toFixed(4)}</Descriptions.Item>}
+          </Descriptions>
+        )}
+      </Section>
+      <Section title="Settings">
+        <Form form={form} layout="vertical" disabled={!isAdmin} requiredMark={false} onFinish={save}>
+          <Form.Item name="memory.mode" label="Mode">
+            <Segmented options={[{ value: 'off', label: 'Off' }, { value: 'shadow', label: 'Measure only' }, { value: 'on', label: 'On' }]} />
+          </Form.Item>
+          <Form.Item name="memory.model" label="Model that writes the summaries" tooltip="Pick a cheap, fast model. It is called only when a summary is needed. Required before you can switch memory on.">
+            <Select allowClear style={{ maxWidth: 320 }} placeholder="choose a model" options={aliases.map((a) => ({ value: a, label: a }))} />
+          </Form.Item>
+          <Form.Item name="memory.highTokens" label="Start summarising above (tokens)" rules={[{ required: true, type: 'number', min: 20000, max: 2000000 }]}>
+            <InputNumber style={{ width: 200 }} step={10000} min={20000} />
+          </Form.Item>
+          <Form.Item name="memory.lowTokens" label="Aim to get down to (tokens)" tooltip="Must be lower than the upper limit." rules={[{ required: true, type: 'number', min: 5000, max: 1000000 }]}>
+            <InputNumber style={{ width: 200 }} step={5000} min={5000} />
+          </Form.Item>
+          {isAdmin && <Button type="primary" htmlType="submit">Save</Button>}
+        </Form>
+      </Section>
+      <Section title="What the router remembers now">
+        <Table<MemoryRow>
+          size="small"
+          rowKey="sessionId"
+          pagination={false}
+          dataSource={data?.summaries ?? []}
+          locale={{ emptyText: 'No summaries yet' }}
+          columns={[
+            { title: 'Conversation', dataIndex: 'sessionId', render: (v: string) => <code>{v}</code> },
+            { title: 'Covers', dataIndex: 'covers', render: (v: number) => `${v} messages` },
+            { title: 'Summary', dataIndex: 'summaryTokens', render: (v: number, r) => `${fmtCompact(v)} tokens (from ${fmtCompact(r.sourceTokens)})` },
+            { title: 'Updated', dataIndex: 'createdAt', render: (v: number) => fmtDateTime(v) },
+            {
+              title: '', width: 150,
+              render: (_: unknown, r) => (
+                <Space size={4}>
+                  <Button size="small" type="link" onClick={() => modal.info({ title: `Summary of ${r.sessionId}`, width: 720, content: <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 420, overflow: 'auto', margin: 0 }}>{r.summary}</pre> })}>View</Button>
+                  {isAdmin && (
+                    <Popconfirm title="Forget this conversation's summary?" description="The next request sends the full conversation again." okText="Forget" onConfirm={async () => { await api(`/admin/memory/${encodeURIComponent(r.sessionId)}`, { method: 'DELETE' }); await load(); }}>
+                      <Button size="small" type="link" danger>Forget</Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              ),
+            },
+          ]}
+        />
+        {isAdmin && (data?.summaries.length ?? 0) > 0 && (
+          <Popconfirm title="Forget all summaries?" okText="Forget all" okButtonProps={{ danger: true }} onConfirm={async () => { await api('/admin/memory/clear', { method: 'POST', body: '{}' }); await load(); }}>
+            <Button danger style={{ marginTop: 12 }}>Forget all</Button>
+          </Popconfirm>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// ---------- Claude Code (token efficiency) ----------
+interface ModelOpt { alias: string; provider: string; model: string }
+
+/** Builds the exact ~/.claude/settings.json content for THIS router: real port, real statusline path, your models. */
+function ClaudeCode() {
+  const [models, setModels] = useState<ModelOpt[]>([]);
+  const [sys, setSys] = useState<{ port: number; root: string; statusline: string } | null>(null);
+  const [pick, setPick] = useState({ opus: '', sonnet: '', haiku: '', fast: '', extra: '', start: 'sonnet' });
+  const [withStatus, setWithStatus] = useState(true);
+  const [withGuard, setWithGuard] = useState(true);
+
+  useEffect(() => {
+    void Promise.all([
+      api<{ models: ModelOpt[] }>('/admin/models'),
+      api<{ aliases: Record<string, string>; defaultModel: string }>('/admin/settings'),
+      api<{ port: number; root: string; statusline: string }>('/admin/system'),
+    ]).then(([m, st, sy]) => {
+      setModels(m.models);
+      setSys(sy);
+      setPick((p) => ({
+        ...p,
+        opus: st.aliases.opus ?? st.defaultModel ?? '',
+        sonnet: st.aliases.sonnet ?? st.defaultModel ?? '',
+        haiku: st.aliases.haiku ?? st.defaultModel ?? '',
+        fast: st.aliases.haiku ?? st.defaultModel ?? '',
+      }));
+    }).catch(() => undefined);
+  }, []);
+
+  const opts = models.map((m) => ({ value: m.alias, label: `${m.alias}  (${m.provider}/${m.model})` }));
+  const json = useMemo(() => {
+    const env: Record<string, string> = {
+      ANTHROPIC_BASE_URL: `http://127.0.0.1:${sys?.port ?? 21450}`,
+      ANTHROPIC_AUTH_TOKEN: '<paste the ROUTER_KEY value from your .env>',
+    };
+    if (pick.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = pick.opus;
+    if (pick.sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = pick.sonnet;
+    if (pick.haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = pick.haiku;
+    if (pick.fast) env.ANTHROPIC_SMALL_FAST_MODEL = pick.fast;
+    if (pick.extra) {
+      env.ANTHROPIC_CUSTOM_MODEL_OPTION = pick.extra;
+      env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME = pick.extra;
+      const m = models.find((x) => x.alias === pick.extra);
+      env.ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION = m ? `${m.provider}/${m.model}` : pick.extra;
+    }
+    if (withGuard) {
+      env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '120000';
+      env.CLAUDE_CODE_DISABLE_1M_CONTEXT = '1';
+    }
+    env.API_TIMEOUT_MS = '3000000';
+    env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+    const out: Record<string, unknown> = { env, model: pick.start };
+    if (withStatus) out.statusLine = { type: 'command', command: `node "${sys?.statusline ?? '/path/to/claude-router/scripts/statusline.mjs'}"` };
+    return JSON.stringify(out, null, 2);
+  }, [pick, sys, models, withStatus, withGuard]);
+  const statusJson = useMemo(
+    () => JSON.stringify({ statusLine: { type: 'command', command: `node "${sys?.statusline ?? '/path/to/claude-router/scripts/statusline.mjs'}"` } }, null, 2),
+    [sys],
+  );
+  const sel = (k: keyof typeof pick, label: string, allowEmpty = false) => (
+    <div style={{ minWidth: 240, flex: '1 1 240px' }}>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{label}</Typography.Text>
+      <Select
+        style={{ width: '100%' }}
+        allowClear={allowEmpty}
+        placeholder={allowEmpty ? 'none' : undefined}
+        value={pick[k] || undefined}
+        options={opts}
+        onChange={(v) => setPick((p) => ({ ...p, [k]: v ?? '' }))}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      <Section
+        title="Your Claude Code settings.json"
+        description={<>Pick which router model each Claude Code slot uses. The JSON below updates live with your real port and file path. <b>Merge</b> the <code>"env"</code>, <code>"model"</code> and <code>"statusLine"</code> parts into <code>~/.claude/settings.json</code> (keep your other settings such as <code>permissions</code>), set <code>ANTHROPIC_AUTH_TOKEN</code> to your <code>ROUTER_KEY</code>, then restart VS Code or the terminal. This file is shared by the VS Code extension and the <code>claude</code> command.</>}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+          {sel('opus', 'Opus row')}
+          {sel('sonnet', 'Sonnet row')}
+          {sel('haiku', 'Haiku row')}
+          {sel('fast', 'Background tasks (small/fast)')}
+          {sel('extra', 'One extra picker row', true)}
+          <div style={{ minWidth: 240, flex: '1 1 240px' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>Start with</Typography.Text>
+            <Segmented block value={pick.start} options={['opus', 'sonnet', 'haiku']} onChange={(v) => setPick((p) => ({ ...p, start: String(v) }))} />
+          </div>
+        </div>
+        <Space size={24} wrap style={{ marginBottom: 12 }}>
+          <span><Switch size="small" checked={withGuard} onChange={setWithGuard} /> <Typography.Text type="secondary">Compact earlier (saves tokens)</Typography.Text></span>
+          <span><Switch size="small" checked={withStatus} onChange={setWithStatus} /> <Typography.Text type="secondary">Status line</Typography.Text></span>
+        </Space>
+        <Highlighter language="json" fileName="~/.claude/settings.json" copyable variant="filled" style={{ maxHeight: 520, overflow: 'auto' }}>
+          {json}
+        </Highlighter>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12, fontSize: 13 }}>
+          Plain numbers only (<code>120000</code>, never <code>120k</code>). The picker shows Opus, Sonnet, Haiku and one extra row; every other model is chosen by typing <code>/model name</code>. Afterwards watch <Link to="/live">Live</Link> and <Link to="/usage">Usage</Link>: the “Context size” numbers should stop climbing past roughly 90K. Use <code>/clear</code> between unrelated tasks and <code>/compact</code> after a big task.
         </Typography.Paragraph>
       </Section>
-      <Section title="Status line" description="Provider/model, elapsed time, ETA, session tokens and cost in the Claude Code status bar.">
-        <Snippet language="json">{STATUSLINE_SNIPPET}</Snippet>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>Replace the path with your real repo path. Test with <code>node scripts/statusline.mjs</code>.</Typography.Text>
+      <Section title="Status line only" description="Provider/model, elapsed time, ETA, session tokens and cost in the Claude Code status bar. The path is this router's real location.">
+        <Highlighter language="json" fileName="statusLine" copyable variant="filled">
+          {statusJson}
+        </Highlighter>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Test it in a terminal: <code>node "{sys?.statusline ?? 'scripts/statusline.mjs'}"</code>. It prints one line, or <code>claude-router - idle</code> when nothing runs.
+        </Typography.Text>
       </Section>
     </>
   );

@@ -1,56 +1,64 @@
 import { ReloadOutlined } from '@ant-design/icons';
-import { Alert, Button, Descriptions, Drawer, Input, Segmented, Select, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Descriptions, Drawer, Input, Segmented, Select, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, subscribeEta } from '../api';
 import { useAppSettings } from '../appSettings';
+import Anatomy from '../components/Anatomy';
 import { RequestTable, type Row } from '../components/RequestTable';
 import { fmtCompact, fmtDateTime, fmtExact, fmtMs, fmtPct, fmtUsd } from '../format';
 import type { HistoryResponse, HistoryRow } from '../types';
 
-const PAGE = 50;
+const SIZES = [25, 50, 100, 200];
+const DEFAULT_SIZE = 25;
 
-/** Persistent request log: survives restarts, includes requests that are still running. */
+/** Persistent request log with real pages. Page, page size and filters live in the URL, so a refresh or a shared link lands on the same rows. */
 export default function HistoryPage() {
   const { settings } = useAppSettings();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const status = (params.get('status') ?? 'all') as 'all' | 'ok' | 'error';
   const alias = params.get('alias') ?? '';
+  const size = SIZES.includes(Number(params.get('size'))) ? Number(params.get('size')) : DEFAULT_SIZE;
+  const page = Math.max(1, Math.floor(Number(params.get('page')) || 1));
   const [data, setData] = useState<HistoryResponse | null>(null);
-  const [extra, setExtra] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [aliases, setAliases] = useState<string[]>([]);
   const [open, setOpen] = useState<HistoryRow | null>(null);
   const [search, setSearch] = useState(q);
 
-  const set = (k: string, v: string) => {
+  /** Change URL params. Any filter change goes back to page 1. */
+  const patch = (changes: Record<string, string>, keepPage = false) => {
     const next = new URLSearchParams(params);
-    if (v && v !== 'all') next.set(k, v);
-    else next.delete(k);
+    for (const [k, v] of Object.entries(changes)) {
+      if (v && v !== 'all' && !(k === 'page' && v === '1') && !(k === 'size' && Number(v) === DEFAULT_SIZE)) next.set(k, v);
+      else next.delete(k);
+    }
+    if (!keepPage) next.delete('page');
     setParams(next, { replace: true });
   };
 
   const load = useCallback(async () => {
-    const qs = new URLSearchParams({ limit: String(PAGE) });
+    const qs = new URLSearchParams({ limit: String(size), offset: String((page - 1) * size) });
     if (q) qs.set('q', q);
     if (status !== 'all') qs.set('status', status);
     if (alias) qs.set('alias', alias);
     try {
       setData(await api<HistoryResponse>(`/admin/requests?${qs}`));
-      setExtra([]);
     } finally {
       setLoading(false);
     }
-  }, [q, status, alias]);
+  }, [q, status, alias, size, page]);
 
   useEffect(() => {
     setLoading(true);
     void load();
   }, [load]);
 
-  // Refresh when a request starts or finishes (stream), and every 10s as a safety net.
+  // The newest requests live on page 1, so only page 1 refreshes by itself (a request ending, plus every 10 s).
+  // On any other page the rows stay put; use the refresh button.
   useEffect(() => {
+    if (page !== 1) return;
     let timer: number | undefined;
     const soon = () => {
       window.clearTimeout(timer);
@@ -63,28 +71,24 @@ export default function HistoryPage() {
       window.clearInterval(poll);
       window.clearTimeout(timer);
     };
-  }, [load]);
+  }, [load, page]);
 
   useEffect(() => {
     void api<{ models: { alias: string }[] }>('/admin/models').then((r) => setAliases(r.models.map((m) => m.alias))).catch(() => undefined);
   }, []);
 
-  const more = async () => {
-    const all = [...(data?.rows ?? []), ...extra];
-    const before = all[all.length - 1]?.endedAt;
-    const qs = new URLSearchParams({ limit: String(PAGE), before: String(before) });
-    if (q) qs.set('q', q);
-    if (status !== 'all') qs.set('status', status);
-    if (alias) qs.set('alias', alias);
-    const r = await api<HistoryResponse>(`/admin/requests?${qs}`);
-    setExtra((e) => [...e, ...r.rows]);
-    setData((d) => (d ? { ...d, hasMore: r.hasMore } : d));
-  };
+  // Deleted history or a narrower filter can leave us past the last page: jump back to it.
+  const lastPage = data ? Math.max(1, Math.ceil(data.total / size)) : 1;
+  useEffect(() => {
+    if (data && page > lastPage) patch({ page: String(lastPage) }, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, lastPage, page]);
 
   const rows: Row[] = useMemo(
-    () => [...(data?.running ?? []).map((r) => ({ ...r, running: true as const })), ...(data?.rows ?? []), ...extra],
-    [data, extra],
+    () => [...(page === 1 ? (data?.running ?? []).map((r) => ({ ...r, running: true as const })) : []), ...(data?.rows ?? [])],
+    [data, page],
   );
+  const filtered = !!(q || status !== 'all' || alias);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -92,7 +96,8 @@ export default function HistoryPage() {
         <div style={{ flex: 1, minWidth: 240 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>History</Typography.Title>
           <Typography.Text type="secondary">
-            {data ? `${fmtExact(data.total)} requests${q || status !== 'all' || alias ? ' match' : ' stored'}` : 'Loading…'} · kept for {settings['history.retentionDays'] || '∞'} days
+            {data ? `${fmtExact(data.total)} requests${filtered ? ' match' : ' stored'}` : 'Loading…'} · kept for {settings['history.retentionDays'] || '∞'} days
+            {page > 1 && <Tag style={{ marginLeft: 8 }}>page {page}: not auto-refreshing</Tag>}
           </Typography.Text>
         </div>
         <Input.Search
@@ -101,26 +106,41 @@ export default function HistoryPage() {
           placeholder="Model, provider, session…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onSearch={(v) => set('q', v.trim())}
+          onSearch={(v) => patch({ q: v.trim() })}
         />
         <Select
           allowClear
           style={{ width: 150 }}
           placeholder="All models"
           value={alias || undefined}
-          onChange={(v) => set('alias', v ?? '')}
+          onChange={(v) => patch({ alias: v ?? '' })}
           options={aliases.map((a) => ({ value: a, label: a }))}
         />
-        <Segmented value={status} onChange={(v) => set('status', String(v))} options={[{ value: 'all', label: 'All' }, { value: 'ok', label: 'OK' }, { value: 'error', label: 'Errors' }]} />
+        <Segmented value={status} onChange={(v) => patch({ status: String(v) })} options={[{ value: 'all', label: 'All' }, { value: 'ok', label: 'OK' }, { value: 'error', label: 'Errors' }]} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} aria-label="Refresh" />
       </div>
 
-      {!loading && rows.length === 0 && <Alert type="info" showIcon message="No requests yet" description="Point Claude Code at the router and every request shows up here." />}
+      {!loading && rows.length === 0 && !filtered && <Alert type="info" showIcon message="No requests yet" description="Point Claude Code at the router and every request shows up here." />}
+      {!loading && rows.length === 0 && filtered && <Alert type="info" showIcon message="Nothing matches these filters" />}
 
-      <RequestTable rows={rows} loading={loading} warnTokens={settings['context.warnTokens']} onOpen={setOpen} />
-      {data?.hasMore && (
-        <Button style={{ alignSelf: 'center' }} onClick={() => void more()}>Load more</Button>
-      )}
+      <RequestTable
+        rows={rows}
+        loading={loading}
+        warnTokens={settings['context.warnTokens']}
+        onOpen={setOpen}
+        pagination={{
+          current: page,
+          pageSize: size,
+          total: data?.total ?? 0,
+          showSizeChanger: true,
+          pageSizeOptions: SIZES.map(String),
+          showQuickJumper: (data?.total ?? 0) > size * 5,
+          showTotal: (total, range) => `${fmtExact(range[0])}-${fmtExact(range[1])} of ${fmtExact(total)}`,
+          hideOnSinglePage: false,
+          position: ['bottomRight'],
+          onChange: (p, s) => (s !== size ? patch({ size: String(s), page: '1' }, true) : patch({ page: String(p) }, true)),
+        }}
+      />
 
       <Drawer title="Request details" width={480} open={!!open} onClose={() => setOpen(null)}>
         {open && (
@@ -141,7 +161,19 @@ export default function HistoryPage() {
             <Descriptions.Item label="Time to first token">{fmtMs(open.ttftMs)}</Descriptions.Item>
             <Descriptions.Item label="Duration">{fmtMs(open.durationMs)}</Descriptions.Item>
             <Descriptions.Item label="Cost (estimate)">{fmtUsd(open.cost)}</Descriptions.Item>
+            {(open.memorySaved > 0 || open.memoryWould > 0) && (
+              <Descriptions.Item label="Router memory">{open.memorySaved > 0 ? `old messages replaced by a stored summary, ~${fmtExact(open.memorySaved)} tokens saved` : `a summary would save ~${fmtExact(open.memoryWould)} tokens`}</Descriptions.Item>
+            )}
+            {(open.guardSaved > 0 || open.guardWould > 0) && (
+              <Descriptions.Item label="Context guard">{open.guardSaved > 0 ? `removed ~${fmtExact(open.guardSaved)} tokens` : `would remove ~${fmtExact(open.guardWould)} tokens`}</Descriptions.Item>
+            )}
           </Descriptions>
+        )}
+        {open && open.anatomy && (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong>What this prompt was made of</Typography.Text>
+            <div style={{ marginTop: 8 }}><Anatomy data={open.anatomy} /></div>
+          </div>
         )}
         {open && open.trace.length > 0 && (
           <div style={{ marginTop: 16 }}>
@@ -160,7 +192,6 @@ export default function HistoryPage() {
           </div>
         )}
       </Drawer>
-      <Space />
     </div>
   );
 }

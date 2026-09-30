@@ -241,6 +241,11 @@ export interface HistoryRow {
   askedAlias: string | null;
   requestedModel: string | null;
   resolvedVia: 'exact' | 'alias' | 'default' | null;
+  /** Router memory: tokens a stored summary removed from this request / would remove (shadow). */
+  memorySaved: number;
+  memoryWould: number;
+  /** Estimated prompt tokens by part, as the client sent it. */
+  anatomy: Record<string, number> | null;
   trace: { route: string; key?: string; outcome: 'served' | 'skipped' | 'failed' | 'retry'; status?: number; detail?: string }[];
 }
 
@@ -282,6 +287,8 @@ export interface Insights {
   };
   context: { avg: number; p50: number; p90: number; max: number; overWarn: number; compactions: number };
   guard: { requests: number; saved: number; would: number; input: number };
+  memory: { requests: number; saved: number; would: number; summaries: number; summarisedTokens: number; summaryTokens: number; cost: number };
+  anatomy: { requests: number; average: Record<string, number> };
   topSessions: { sessionId: string; requests: number; ctxTotal: number; maxCtx: number; startedAt: number; endedAt: number }[];
   hourly: { t: number; requests: number; ctx: number; out: number; cacheRead: number }[];
 }

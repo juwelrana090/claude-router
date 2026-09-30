@@ -34,6 +34,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, fetchSnapshot, fetchUsageSummary, subscribeEta } from '../api';
+import Anatomy from '../components/Anatomy';
 import { useAppSettings } from '../appSettings';
 import { fmtCompact, fmtExact, fmtPct, fmtUsd as fmtUsdShared } from '../format';
 import { useThemeMode } from '../theme';
@@ -743,6 +744,15 @@ export default function UsagePage() {
                       ]}
                     />
                   )}
+                </Panel>
+              ) : null}
+
+              {insights && insights.anatomy.requests > 0 ? (
+                <Panel
+                  title="Where your prompt tokens go"
+                  caption={`Average prompt over the last ${insights.anatomy.requests} requests, by part. The biggest bar is where shrinking pays off most. Estimates.`}
+                >
+                  <Anatomy data={insights.anatomy.average} />
                 </Panel>
               ) : null}
 

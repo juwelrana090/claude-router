@@ -87,7 +87,27 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE requests ADD COLUMN asked_alias TEXT;
    ALTER TABLE requests ADD COLUMN requested_model TEXT;
    ALTER TABLE requests ADD COLUMN resolved_via TEXT;
-   ALTER TABLE requests ADD COLUMN trace TEXT;`,
+    ALTER TABLE requests ADD COLUMN trace TEXT;`,
+  // 4: fast "today" counters per provider (daily request/token limits)
+  `CREATE INDEX idx_requests_provider_ended ON requests(provider, ended_at);`,
+  // 5: router memory (rolling summaries) + prompt anatomy per request
+  `CREATE TABLE memory_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    upto_count INTEGER NOT NULL,
+    prefix_hash TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    summary_tokens INTEGER NOT NULL,
+    source_tokens INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    cost REAL NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    UNIQUE (session_id, upto_count)
+  );
+  CREATE INDEX idx_memory_session ON memory_summaries(session_id, upto_count DESC);
+  ALTER TABLE requests ADD COLUMN memory_saved INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE requests ADD COLUMN memory_would INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE requests ADD COLUMN anatomy TEXT;`,
 ];
 
 function migrate(): void {
@@ -122,6 +142,13 @@ export const SETTING_DEFAULTS = {
   "guard.minChars": 1200,
   "routing.failover": "auto",
   "routing.retries": 2,
+  "guard.trimInputs": true,
+  "guard.trimPastes": false,
+  "guard.pasteChars": 12_000,
+  "memory.mode": "shadow",
+  "memory.model": "",
+  "memory.highTokens": 80_000,
+  "memory.lowTokens": 35_000,
 } as const;
 export type SettingKey = keyof typeof SETTING_DEFAULTS;
 

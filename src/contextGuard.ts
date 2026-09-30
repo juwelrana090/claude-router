@@ -22,6 +22,11 @@ export interface GuardConfig {
   lowTokens: number;
   keepRecent: number;
   minChars: number;
+  /** Also shrink the big text inside the tool CALL (e.g. the file body of an old Write) when its result is cleared. */
+  trimInputs: boolean;
+  /** Shrink very large pasted text in OLD user messages (never the first message, never the newest two). */
+  trimPastes: boolean;
+  pasteChars: number;
 }
 
 export interface GuardResult {
@@ -43,6 +48,9 @@ export function readConfig(): GuardConfig {
     lowTokens: Number(getSetting("guard.lowTokens")),
     keepRecent: Number(getSetting("guard.keepRecent")),
     minChars: Number(getSetting("guard.minChars")),
+    trimInputs: (getSetting("guard.trimInputs") as boolean) !== false,
+    trimPastes: (getSetting("guard.trimPastes") as boolean) === true,
+    pasteChars: Number(getSetting("guard.pasteChars")),
   };
 }
 
@@ -59,6 +67,63 @@ interface Slot {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
+
+// ---- old tool-call inputs and old pasted text (stateless, deterministic) ----
+const INPUT_DEPTH = 4;
+
+/** Characters held by big strings inside a tool call's input. */
+function bigChars(v: Json, min: number, depth = 0): number {
+  if (typeof v === "string") return v.length >= min ? v.length : 0;
+  if (depth >= INPUT_DEPTH || v == null || typeof v !== "object") return 0;
+  let n = 0;
+  for (const x of Object.values(v)) n += bigChars(x, min, depth + 1);
+  return n;
+}
+
+export const inputStub = (chars: number): string => `[router: ${chars} characters cleared to save tokens]`;
+
+function trimStrings(v: Json, min: number, depth = 0): Json {
+  if (typeof v === "string") return v.length >= min ? inputStub(v.length) : v;
+  if (depth >= INPUT_DEPTH || v == null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => trimStrings(x, min, depth + 1));
+  const out: Json = {};
+  for (const [k, x] of Object.entries(v)) out[k] = trimStrings(x, min, depth + 1);
+  return out;
+}
+
+export const pasteStub = (head: string, tail: string, omitted: number): string =>
+  `${head}\n[router: about ${omitted} characters of pasted text omitted to save tokens]\n${tail}`;
+
+interface PasteEdit {
+  mi: number;
+  bi: number;
+  text: string;
+  gain: number;
+}
+
+/** Old user text blocks above `pasteChars`, except the first user message and the newest two text turns. */
+function pasteEdits(messages: Json[], cfg: GuardConfig): PasteEdit[] {
+  if (!cfg.trimPastes) return [];
+  const turns: number[] = [];
+  messages.forEach((m, i) => {
+    if (m?.role !== "user") return;
+    const blocks: Json[] = typeof m.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m.content) ? m.content : [];
+    if (blocks.some((b) => b?.type === "text" && String(b.text ?? "").length > 0)) turns.push(i);
+  });
+  const old = new Set(turns.slice(1, Math.max(1, turns.length - 2)));
+  const edits: PasteEdit[] = [];
+  for (const mi of old) {
+    const m = messages[mi];
+    if (!Array.isArray(m.content)) continue; // plain-string content is left alone
+    m.content.forEach((b: Json, bi: number) => {
+      if (b?.type !== "text" || typeof b.text !== "string" || b.text.length < cfg.pasteChars) return;
+      const head = b.text.slice(0, 1500), tail = b.text.slice(-500);
+      const text = pasteStub(head, tail, b.text.length - head.length - tail.length);
+      edits.push({ mi, bi, text, gain: Math.max(0, Math.ceil((b.text.length - text.length) / CHARS_PER_TOKEN)) });
+    });
+  }
+  return edits;
+}
 
 export const stubFor = (chars: number): string =>
   `[router: output of this tool call was cleared to save tokens (${chars} characters). Run the tool again if you still need it.]`;
@@ -129,7 +194,8 @@ export function applyGuard(body: Json, sessionId: string, cfg: GuardConfig = rea
     const messages: Json[] = body.messages;
     const before = estimateTokens(body);
     const slots = collect(messages);
-    if (!slots.length) return none(before);
+    const pastes = pasteEdits(messages, cfg);
+    if (!slots.length && !pastes.length) return none(before);
 
     const protectedFrom = Math.max(0, slots.length - cfg.keepRecent);
     const isProtected = (i: number) => i >= protectedFrom;
@@ -139,7 +205,7 @@ export function applyGuard(body: Json, sessionId: string, cfg: GuardConfig = rea
 
     // 1) everything remembered from earlier requests is applied again, unchanged.
     const apply = new Set<number>();
-    let est = before;
+    let est = before - pastes.reduce((n, p) => n + p.gain, 0);
     slots.forEach((s, i) => {
       if (cleared.has(s.id) && !isProtected(i) && !s.hasImage) {
         apply.add(i);
@@ -160,7 +226,29 @@ export function applyGuard(body: Json, sessionId: string, cfg: GuardConfig = rea
         else cleared.add(s.id);
       }
     }
-    if (!apply.size) return { body, result: { ...none(before).result, clearedTotal: cleared.size } };
+    // 3) the tool CALL of every cleared result: shrink the big strings inside its input as well.
+    const uses = new Map<string, { mi: number; bi: number }>();
+    if (cfg.trimInputs) {
+      messages.forEach((m, mi) => {
+        if (m?.role !== "assistant" || !Array.isArray(m.content)) return;
+        m.content.forEach((b: Json, bi: number) => {
+          if (b?.type === "tool_use" && typeof b.id === "string") uses.set(b.id, { mi, bi });
+        });
+      });
+    }
+    const inputEdits: { mi: number; bi: number; input: Json }[] = [];
+    if (cfg.trimInputs) {
+      for (const i of apply) {
+        const u = uses.get(slots[i].id);
+        if (!u) continue;
+        const blk = messages[u.mi].content[u.bi];
+        const big = bigChars(blk.input, cfg.minChars);
+        if (big <= 0) continue;
+        est -= Math.max(0, Math.ceil(big / CHARS_PER_TOKEN) - 20);
+        inputEdits.push({ mi: u.mi, bi: u.bi, input: trimStrings(blk.input, cfg.minChars) });
+      }
+    }
+    if (!apply.size && !pastes.length) return { body, result: { ...none(before).result, clearedTotal: cleared.size } };
 
     const saved = Math.max(0, before - est);
     const result: GuardResult = {
@@ -170,17 +258,28 @@ export function applyGuard(body: Json, sessionId: string, cfg: GuardConfig = rea
       saved: cfg.mode === "on" ? saved : 0,
       would: cfg.mode === "shadow" ? saved : 0,
       clearedNow,
-      clearedTotal: apply.size,
+      clearedTotal: apply.size + pastes.length,
     };
     if (cfg.mode !== "on") return { body, result: { ...result, afterTokens: before } };
 
     const nextMessages = messages.slice();
     const touched = new Map<number, Json>();
+    const edit = (mi: number): Json => touched.get(mi) ?? { ...messages[mi], content: messages[mi].content.slice() };
     for (const i of apply) {
       const s = slots[i];
-      const msg = touched.get(s.mi) ?? { ...messages[s.mi], content: messages[s.mi].content.slice() };
+      const msg = edit(s.mi);
       msg.content[s.bi] = { ...msg.content[s.bi], content: stubFor(s.chars) };
       touched.set(s.mi, msg);
+    }
+    for (const e of inputEdits) {
+      const msg = edit(e.mi);
+      msg.content[e.bi] = { ...msg.content[e.bi], input: e.input };
+      touched.set(e.mi, msg);
+    }
+    for (const p of pastes) {
+      const msg = edit(p.mi);
+      msg.content[p.bi] = { ...msg.content[p.bi], text: p.text };
+      touched.set(p.mi, msg);
     }
     for (const [mi, msg] of touched) nextMessages[mi] = msg;
     return { body: { ...body, messages: nextMessages }, result };

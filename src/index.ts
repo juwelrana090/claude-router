@@ -6,12 +6,15 @@ import { once } from "node:events";
 
 import { Config, ModelCfg, PORT, ProviderCfg, ROOT, ROUTER_KEY, getCfg } from "./config";
 import { handleAdmin, hostAllowed, originAllowed } from "./admin";
+import { promptAnatomy } from "./anatomy";
 import { applyGuard, pruneGuardMemory } from "./contextGuard";
+import { applyMemory, pruneMemory } from "./memory";
 import { canWrite, handleAuthRoutes, headerKeyOk, principal, seedAdminFromEnv, userCount } from "./auth";
 import * as history from "./history";
 import * as eta from "./eta";
 import * as live from "./live";
 import { costOf } from "./pricing";
+import { budgetReason, fitToWindow } from "./capacity";
 import { classifyFailure } from "./failure";
 import { getSetting } from "./db";
 import { buildBody, buildHeaders, keyOrder, resolveModel } from "./routing";
@@ -278,7 +281,10 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
 
   // Context guard: clear OLD tool outputs (remembered per session) before the prompt goes upstream.
   const guard = applyGuard(body, sessionId);
-  const upstreamBody = guard.body as Record<string, unknown>;
+  // Router memory: replace the old part of a long conversation by the stored summary (written in the background).
+  const memory = applyMemory(body, guard.body, sessionId);
+  const upstreamBody = memory.body as Record<string, unknown>;
+  const anatomy = promptAnatomy(body);
   if (guard.result.saved > 0 || guard.result.clearedNow > 0) {
     console.log(`[GUARD] ${sessionId} ${guard.result.mode}: ~${guard.result.beforeTokens} -> ~${guard.result.afterTokens} tokens (cleared ${guard.result.clearedNow} new, ${guard.result.clearedTotal} total)`);
   }
@@ -309,6 +315,9 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     eta.begin(t);
     t.guardSaved = guard.result.saved;
     t.guardWould = guard.result.would;
+    t.memorySaved = memory.result.saved;
+    t.memoryWould = memory.result.would;
+    t.anatomy = anatomy;
     t.askedAlias = alias;
     t.requestedModel = String(body.model);
     t.resolvedVia = resolved.via;
@@ -332,6 +341,16 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     const p: ProviderCfg | undefined = c.providers[m.provider];
     if (!p || p.disabled) {
       addTrace({ route: routeName, outcome: "skipped", detail: p ? `provider ${m.provider} is disabled` : `provider ${m.provider} does not exist` });
+      continue;
+    }
+    const spent = budgetReason(m.provider, p);
+    if (spent) {
+      addTrace({ route: routeName, outcome: "skipped", detail: `${m.provider}: ${spent}` });
+      continue;
+    }
+    const fit = fitToWindow(upstreamBody, m, sessionId, routeName);
+    if (fit.skip) {
+      addTrace({ route: routeName, outcome: "skipped", detail: fit.skip });
       continue;
     }
     const keys = keyOrder(p, m, seed);
@@ -364,7 +383,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
           up = await fetch(`${p.baseURL}/v1/messages`, {
             method: "POST",
             headers: buildHeaders(req, p, keyName),
-            body: buildBody(upstreamBody, m, p),
+            body: buildBody(fit.body, m, p),
             signal: ac.signal,
           });
         } catch (e) {
@@ -404,7 +423,8 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         }
 
         live.noteSuccess(keyName);
-        addTrace({ route: routeName, key: keyName, outcome: "served", status: up.status });
+        addTrace({ route: routeName, key: keyName, outcome: "served", status: up.status, detail: fit.note });
+        if (fit.saved > 0 && track) track.guardSaved = (track.guardSaved ?? 0) + fit.saved;
         if (routeName !== alias) console.warn(`[ROUTER] asked "${body.model}" (${alias}) but served by ${routeName}: ${summary()}`);
         return relay(up, res, body, routeName, m, keyName, started, track);
       }
@@ -590,7 +610,8 @@ seedAdminFromEnv();
   if (n) console.log(`[HISTORY] imported ${n} requests from logs/usage.jsonl`);
   history.pruneOld();
   pruneGuardMemory();
-  setInterval(() => { history.pruneOld(); pruneGuardMemory(); }, 6 * 3600_000).unref();
+  pruneMemory();
+  setInterval(() => { history.pruneOld(); pruneGuardMemory(); pruneMemory(); }, 6 * 3600_000).unref();
 }
 eta.seedHistory()
   .catch((e) => console.warn("[ETA] usage log unreadable -> seeding with empty history:",

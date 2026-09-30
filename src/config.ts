@@ -41,6 +41,9 @@ export interface ProviderCfg {
   dropBeta?: boolean;
   dropBodyFields?: string[];
   disabled?: boolean;
+  /** Optional daily caps, counted from the request history since local midnight. Unset = unlimited. */
+  dailyRequests?: number;
+  dailyTokens?: number; // fresh input + cache read + cache write + output
 }
 
 export interface ModelCfg {
@@ -48,6 +51,7 @@ export interface ModelCfg {
   model: string;
   key?: string; // pin this model to one specific key (env var name)
   maxOutputTokens?: number;
+  contextWindow?: number; // the model's real context window in tokens; bigger prompts are trimmed or the route is skipped
   fallback?: string[]; // other router model names, tried in order
   price?: { in: number; out: number; cacheRead?: number; peak?: boolean }; // USD per 1M tokens; peak = provider charges more in its peak hours
 }
@@ -327,8 +331,25 @@ export function validateProviderBody(body: Record<string, unknown>, existing?: P
   const disabled =
     body.disabled === undefined ? !!existing?.disabled : body.disabled === true || body.disabled === "true";
 
+  const limit = (field: "dailyRequests" | "dailyTokens", lo: number, hi: number): number | undefined => {
+    const raw = body[field];
+    if (raw === undefined) return existing?.[field];
+    if (raw === null || raw === "") return undefined; // explicit clear
+    const n = typeof raw === "string" ? Number(raw) : raw;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < lo || n > hi) {
+      errors.push({ field, message: `must be a whole number from ${lo} to ${hi} (leave empty for no limit)` });
+      return existing?.[field];
+    }
+    return n;
+  };
+  const dailyRequests = limit("dailyRequests", 1, 100_000_000);
+  const dailyTokens = limit("dailyTokens", 10_000, 1_000_000_000_000);
+
   if (errors.length) throw new ValidationError(errors);
-  return { baseURL, auth, keys: existing?.keys ?? [], dropBeta, dropBodyFields, disabled };
+  const out: ProviderCfg = { baseURL, auth, keys: existing?.keys ?? [], dropBeta, dropBodyFields, disabled };
+  if (dailyRequests !== undefined) out.dailyRequests = dailyRequests;
+  if (dailyTokens !== undefined) out.dailyTokens = dailyTokens;
+  return out;
 }
 
 export function validateModelAlias(raw: unknown): string {
@@ -401,6 +422,18 @@ export function validateModelBody(
     }
   }
 
+  let contextWindow = existing?.contextWindow;
+  if (body.contextWindow === null || body.contextWindow === "") {
+    contextWindow = undefined; // explicit clear
+  } else if (body.contextWindow !== undefined) {
+    const n = typeof body.contextWindow === "string" ? Number(body.contextWindow) : body.contextWindow;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 4096 || n > 10_000_000) {
+      errors.push({ field: "contextWindow", message: "must be a whole number from 4096 to 10000000 (leave empty if unknown)" });
+    } else {
+      contextWindow = n;
+    }
+  }
+
   let key = existing?.key;
   if (body.key !== undefined) {
     const k = body.key === null ? "" : (body.key as unknown as string);
@@ -448,6 +481,7 @@ export function validateModelBody(
   const out: ModelCfg = { provider: provider as string, model: (model as string).trim() };
   if (key) out.key = key;
   if (maxOutputTokens !== undefined) out.maxOutputTokens = maxOutputTokens;
+  if (contextWindow !== undefined) out.contextWindow = contextWindow;
   if (fallback?.length) out.fallback = fallback;
   if (price) out.price = price;
   return out;

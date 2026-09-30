@@ -48,7 +48,10 @@ interface ModelFormValues {
   provider: string;
   model: string;
   key?: string;
+  newKeyName?: string;
+  newKeyValue?: string;
   maxOutputTokens?: number | null;
+  contextWindow?: number | null;
   fallback?: string[];
   price?: { in?: number | null; out?: number | null; cacheRead?: number | null; peak?: boolean };
 }
@@ -82,6 +85,7 @@ function ModelFormModal({
             model: model.model,
             key: model.key,
             maxOutputTokens: model.maxOutputTokens ?? null,
+            contextWindow: (model as { contextWindow?: number }).contextWindow ?? null,
             fallback: model.fallback,
             price: model.price
               ? { in: model.price.in, out: model.price.out, cacheRead: model.price.cacheRead ?? null, peak: !!(model.price as { peak?: boolean }).peak }
@@ -98,7 +102,15 @@ function ModelFormModal({
   const selectedProvider: AdminProviderView | undefined = snapshot?.providers.find(
     (p) => p.name === (watchedProvider ?? model?.provider),
   );
-  const keyOptions = (selectedProvider?.keys ?? []).map((k) => ({ value: k.envName, label: k.envName }));
+  const keyOptions = (selectedProvider?.keys ?? []).map((k) => ({
+    value: k.envName,
+    label: `${k.envName}${k.configured ? ` (…${k.last4})` : ' (empty in .env)'}`,
+  }));
+  const keyless = selectedProvider?.auth === 'none';
+  const [pasting, setPasting] = useState(false);
+  useEffect(() => {
+    if (!open) setPasting(false);
+  }, [open]);
 
   const submit = async () => {
     if (!version) return;
@@ -117,7 +129,12 @@ function ModelFormModal({
       provider: values.provider,
       model: values.model.trim(),
       key: values.key || null,
+      // A pasted key is added to the provider, saved to .env and pinned to this model in one save.
+      ...(pasting && values.newKeyValue?.trim()
+        ? { newKey: { value: values.newKeyValue.trim(), envName: values.newKeyName?.trim() || undefined } }
+        : {}),
       maxOutputTokens: values.maxOutputTokens ?? null,
+      contextWindow: values.contextWindow ?? null,
       fallback: values.fallback ?? [],
       price: price ?? null,
     };
@@ -183,22 +200,55 @@ function ModelFormModal({
           name="key"
           label="Key"
           tooltip="Pin this model to one specific key, or leave empty to use the provider's key pool."
+          extra={keyless ? 'This provider needs no key (auth: none).' : undefined}
         >
           <Select
             allowClear
+            disabled={keyless || pasting}
             placeholder="pool (any healthy key)"
             options={keyOptions}
             notFoundContent={
-              selectedProvider ? 'This provider has no keys yet' : 'Pick a provider first'
+              selectedProvider ? 'This provider has no keys yet. Paste one below.' : 'Pick a provider first'
             }
           />
         </Form.Item>
+        {!keyless && (
+          <div style={{ marginTop: -8, marginBottom: 16 }}>
+            {!pasting ? (
+              <Button type="link" size="small" style={{ padding: 0 }} disabled={!selectedProvider} onClick={() => setPasting(true)}>
+                Paste a new API key for this model
+              </Button>
+            ) : (
+              <div style={{ border: '1px solid rgba(128,128,128,0.25)', borderRadius: 8, padding: 12 }}>
+                <Typography.Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
+                  The key is saved to .env (never shown again, only the last 4 characters) and added to the {selectedProvider?.name} provider. This model will use it.
+                </Typography.Paragraph>
+                <Form.Item name="newKeyValue" label="API key" rules={[{ required: true, min: 4, message: 'Paste the key' }]} style={{ marginBottom: 8 }}>
+                  <Input.Password autoComplete="new-password" placeholder="secret value" />
+                </Form.Item>
+                <Form.Item name="newKeyName" label="Name in .env (optional)" rules={[{ pattern: /^[A-Z][A-Z0-9_]{1,63}$/, message: 'e.g. MY_PROVIDER_KEY_2' }]} style={{ marginBottom: 8 }}>
+                  <Input placeholder="automatic, e.g. MY_PROVIDER_KEY_2" autoComplete="off" />
+                </Form.Item>
+                <Button size="small" onClick={() => { setPasting(false); form.setFieldsValue({ newKeyValue: undefined, newKeyName: undefined }); }}>
+                  Cancel, use an existing key
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         <Form.Item
           name="maxOutputTokens"
           label="Max output tokens"
           tooltip="Optional cap on output tokens per request. Leave empty for no cap."
         >
           <InputNumber min={1} step={256} style={{ width: '100%' }} placeholder="e.g. 8192" />
+        </Form.Item>
+        <Form.Item
+          name="contextWindow"
+          label="Context window (tokens)"
+          tooltip="The model's real context size, from the provider's docs. When a bigger prompt fails over to this model, the router first clears old tool output so it fits, and skips this model if it still cannot fit. Leave empty if unknown."
+        >
+          <InputNumber min={4096} step={1000} style={{ width: '100%' }} placeholder="e.g. 128000" />
         </Form.Item>
         <Form.Item name="fallback" label="Fallback chain" tooltip="Tried in order when the primary fails.">
           <Select mode="multiple" options={fallbackOptions} placeholder="no fallbacks" />

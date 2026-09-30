@@ -13,9 +13,11 @@
     "check": "tsc --noEmit",
     "smoke": "npm run -s build && node scripts/smoke.mjs",
     "smoke:admin": "npm run -s build && node scripts/admin-smoke.mjs",
-    "smoke:all": "npm run -s smoke && npm run -s smoke:admin && npm run -s smoke:guard && npm run -s smoke:routing",
+    "smoke:all": "npm run -s smoke && npm run -s smoke:admin && npm run -s smoke:guard && npm run -s smoke:routing && npm run -s smoke:capacity && npm run -s smoke:memory",
     "smoke:guard": "npm run -s build && node scripts/guard-smoke.mjs",
-    "smoke:routing": "npm run -s build && node scripts/routing-smoke.mjs"
+    "smoke:routing": "npm run -s build && node scripts/routing-smoke.mjs",
+    "smoke:capacity": "npm run -s build && node scripts/capacity-smoke.mjs",
+    "smoke:memory": "npm run -s build && node scripts/memory-smoke.mjs"
   },
   "license": "ISC",
   "type": "commonjs",

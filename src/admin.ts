@@ -11,6 +11,8 @@ import {
 } from "./config";
 import { DATA_DIR, DB_FILE, SETTING_DEFAULTS, allSettings, db, setSetting } from "./db";
 import { userCount } from "./auth";
+import { budgetReason } from "./capacity";
+import { clearMemory, deleteMemory, listMemory } from "./memory";
 import * as history from "./history";
 import {
   MAX_SSE_CLIENTS, RECENT_MAX, addClient, cooldownLeft, coolInfoFor, dropClient, inFlight,
@@ -126,7 +128,46 @@ function providerView(name: string, p: ProviderCfg) {
     models: Object.keys(getCfg().models).filter((a) => getCfg().models[a].provider === name),
     lastUsed: lastUsedProvider(name),
     last5m: providerRollup(name, 5),
+    dailyRequests: p.dailyRequests ?? null,
+    dailyTokens: p.dailyTokens ?? null,
+    today: history.providerToday(name),
+    budgetReason: budgetReason(name, p),
   };
+}
+
+/**
+ * Optional { newKey: { value, envName? } } on model create/update: the secret is added to the provider's
+ * key list, written to .env, and the model is pinned to it, all in ONE version-checked save.
+ */
+function withNewKey(
+  c: Config, body: Record<string, unknown>, providerName: string | undefined,
+): { cfg: Config; body: Record<string, unknown>; env?: Record<string, string>; envName?: string } {
+  if (body.newKey === undefined || body.newKey === null) return { cfg: c, body };
+  const nk = (typeof body.newKey === "object" ? body.newKey : {}) as Record<string, unknown>;
+  const p = providerName ? c.providers[providerName] : undefined;
+  if (!providerName || !p) throw new ValidationError([{ field: "provider", message: "choose a provider before adding a key" }]);
+  if (p.auth === "none") {
+    throw new ValidationError([{ field: "newKey", message: `provider "${providerName}" needs no key (auth: none)` }]);
+  }
+  const value = typeof nk.value === "string" ? nk.value.trim() : "";
+  if (value.length < 4) throw new ValidationError([{ field: "newKey.value", message: "paste the API key (at least 4 characters)" }]);
+  const owner = new Map<string, string>();
+  for (const [pn, pv] of Object.entries(c.providers)) for (const k of pv.keys) owner.set(k, pn);
+  let envName = typeof nk.envName === "string" ? nk.envName.trim() : "";
+  if (envName) {
+    validateEnvName(envName, "newKey.envName");
+    if (owner.has(envName) && owner.get(envName) !== providerName) {
+      throw new ValidationError([{ field: "newKey.envName", message: `"${envName}" already belongs to provider "${owner.get(envName)}"` }]);
+    }
+  } else {
+    const base = providerName.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+    let n = 1;
+    while (owner.has(`${base}_KEY_${n}`)) n++;
+    envName = `${base}_KEY_${n}`;
+  }
+  const keys = p.keys.includes(envName) ? p.keys : [...p.keys, envName];
+  const cfg: Config = { ...c, providers: { ...c.providers, [providerName]: { ...p, keys } } };
+  return { cfg, body: { ...body, key: envName }, env: { [envName]: value }, envName };
 }
 
 function modelView(alias: string, m: ModelCfg) {
@@ -775,11 +816,16 @@ on("POST", /^\/admin\/models$/, async (req, res) => {
   const alias = validateModelAlias(body.alias);
   if (c.models[alias]) throw new ValidationError([{ field: "alias", message: `"${alias}" already exists` }]);
   const version = expectVersion(body);
-  const m = validateModelBody(body, c);
-  const next: Config = { ...c, models: { ...c.models, [alias]: m } };
+  const nk = withNewKey(c, body, typeof body.provider === "string" ? body.provider : undefined);
+  const m = validateModelBody(nk.body, nk.cfg);
+  const next: Config = { ...nk.cfg, models: { ...nk.cfg.models, [alias]: m } };
   validateNoCycle(next.models, alias);
   commit(next, version);
-  sendJSON(res, 201, { version: configVersion(), model: modelView(alias, getCfg().models[alias]) });
+  if (nk.env) {
+    commitEnv(nk.env, [], typeof body.envVersion === "string" ? body.envVersion : undefined);
+    resetCooldown(nk.envName as string);
+  }
+  sendJSON(res, 201, { version: configVersion(), envVersion: envVersion(), model: modelView(alias, getCfg().models[alias]) });
 });
 
 on("GET", /^\/admin\/models\/([^/]+)$/, (_req, res, [alias]) => {
@@ -798,11 +844,16 @@ on("PUT", /^\/admin\/models\/([^/]+)$/, async (req, res, [alias]) => {
     throw new ValidationError([{ field: "alias", message: "model aliases are immutable; create a new one" }]);
   }
   const version = expectVersion(body);
-  const updated = validateModelBody(body, c, m);
-  const next: Config = { ...c, models: { ...c.models, [alias]: updated } };
+  const nk = withNewKey(c, body, typeof body.provider === "string" ? body.provider : m.provider);
+  const updated = validateModelBody(nk.body, nk.cfg, m);
+  const next: Config = { ...nk.cfg, models: { ...nk.cfg.models, [alias]: updated } };
   validateNoCycle(next.models, alias);
   commit(next, version);
-  sendJSON(res, 200, { version: configVersion(), model: modelView(alias, getCfg().models[alias]) });
+  if (nk.env) {
+    commitEnv(nk.env, [], typeof body.envVersion === "string" ? body.envVersion : undefined);
+    resetCooldown(nk.envName as string);
+  }
+  sendJSON(res, 200, { version: configVersion(), envVersion: envVersion(), model: modelView(alias, getCfg().models[alias]) });
 });
 
 on("DELETE", /^\/admin\/models\/([^/]+)$/, async (req, res, [alias]) => {
@@ -1013,7 +1064,7 @@ on("GET", /^\/admin\/requests$/, (req, res) => {
   const num = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
   const status = q.get("status");
   const out = history.listRequests({
-    limit: num("limit"), before: num("before"),
+    limit: num("limit"), offset: num("offset"), before: num("before"),
     status: status === "ok" || status === "error" ? status : undefined,
     alias: q.get("alias") || undefined, provider: q.get("provider") || undefined,
     q: q.get("q") || undefined, minCtx: num("minCtx"),
@@ -1039,6 +1090,16 @@ on("GET", /^\/admin\/insights$/, (req, res) => {
 });
 
 // ---------- app settings (SQLite) + system information ----------
+on("GET", /^\/admin\/memory$/, (_req, res) => {
+  sendJSON(res, 200, { summaries: listMemory(), stats: history.memoryStats(Date.now() - 86400e3) });
+});
+on("POST", /^\/admin\/memory\/clear$/, (_req, res) => {
+  sendJSON(res, 200, { deleted: clearMemory() });
+});
+on("DELETE", /^\/admin\/memory\/([^/]+)$/, (_req, res, [session]) => {
+  sendJSON(res, 200, { deleted: deleteMemory(decodeURIComponent(session)) });
+});
+
 on("GET", /^\/admin\/app-settings$/, (_req, res) => sendJSON(res, 200, { settings: allSettings() }));
 
 on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
@@ -1058,7 +1119,20 @@ on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
     else if (k === "pricing.peakMultiplier") {
       const n = Number(input[k]);
       if (!Number.isFinite(n) || n < 1 || n > 10) errors.push({ field: k, message: "must be a number from 1 to 10" }); else clean[k] = n;
-    } else if (k === "routing.failover") {
+    } else if (k === "guard.trimInputs" || k === "guard.trimPastes") {
+      if (typeof input[k] !== "boolean") errors.push({ field: k, message: "must be true or false" });
+      else clean[k] = input[k];
+    } else if (k === "guard.pasteChars") int(k, 2_000, 200_000);
+    else if (k === "memory.mode") {
+      if (input[k] !== "off" && input[k] !== "shadow" && input[k] !== "on") errors.push({ field: k, message: "must be off, shadow or on" });
+      else clean[k] = input[k];
+    } else if (k === "memory.model") {
+      const v = String(input[k] ?? "");
+      if (v && !getCfg().models[v]) errors.push({ field: k, message: `"${v}" is not a known model` });
+      else clean[k] = v;
+    } else if (k === "memory.highTokens") int(k, 20_000, 2_000_000);
+    else if (k === "memory.lowTokens") int(k, 5_000, 1_000_000);
+    else if (k === "routing.failover") {
       if (input[k] !== "auto" && input[k] !== "off") errors.push({ field: k, message: "must be auto or off" });
       else clean[k] = input[k];
     } else if (k === "routing.retries") int(k, 0, 5);
@@ -1079,6 +1153,14 @@ on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
   const lo = Number(clean["guard.lowTokens"] ?? cur["guard.lowTokens"]);
   if (("guard.highTokens" in clean || "guard.lowTokens" in clean) && lo >= hi) {
     errors.push({ field: "guard.lowTokens", message: "must be lower than guard.highTokens" });
+  }
+  const mhi = Number(clean["memory.highTokens"] ?? cur["memory.highTokens"]);
+  const mlo = Number(clean["memory.lowTokens"] ?? cur["memory.lowTokens"]);
+  if (("memory.highTokens" in clean || "memory.lowTokens" in clean) && mlo >= mhi) {
+    errors.push({ field: "memory.lowTokens", message: "must be lower than memory.highTokens" });
+  }
+  if (("memory.mode" in clean || "memory.model" in clean) && (clean["memory.mode"] ?? cur["memory.mode"]) === "on" && !String(clean["memory.model"] ?? cur["memory.model"])) {
+    errors.push({ field: "memory.model", message: "choose the model that writes the summaries before switching memory on" });
   }
   if (errors.length) throw new ValidationError(errors);
   for (const [k, v] of Object.entries(clean)) setSetting(k, v);
@@ -1101,6 +1183,8 @@ on("GET", /^\/admin\/system$/, (_req, res) => {
     version, node: process.version, platform: `${process.platform}/${process.arch}`, pid: process.pid,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000), port: PORT,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, memoryMb: Math.round(process.memoryUsage().rss / 1048576),
+    root: path.dirname(ROUTES_FILE),
+    statusline: path.join(path.dirname(ROUTES_FILE), "scripts", "statusline.mjs"),
     paths: { routes: ROUTES_FILE, env: ENV_FILE, backups: BACKUP_DIR, database: DB_FILE, dataDir: DATA_DIR, usageLog: LOG_FILE },
     database: { bytes: dbBytes, requests: count("SELECT COUNT(*) AS n FROM requests"), oldestRequestAt: oldest.t, users: userCount() },
     usageLogBytes: logBytes,

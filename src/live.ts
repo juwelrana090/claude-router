@@ -32,6 +32,10 @@ export interface InFlight {
   // context guard numbers for the history row
   guardSaved?: number;
   guardWould?: number;
+  // router memory (rolling summary) numbers and what the prompt was made of
+  memorySaved?: number;
+  memoryWould?: number;
+  anatomy?: import("./anatomy").Anatomy;
   // routing visibility: what the client asked for and how the router got to the route that answered
   askedAlias?: string;
   requestedModel?: string;

@@ -150,10 +150,11 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
   - **Router chose:** সেই নাম থেকে router কোন alias ধরেছে
   - **Answered by:** আসলে কে উত্তর দিল
   - **Route taken:** ধাপে ধাপে কী হয়েছিল। `skipped` (এড়ানো হয়েছে, কারণসহ), `failed`, `retry`, `served`।
-- **Load more:** আরও পুরনো request।
+- **পেজ (Pagination):** টেবিলের নিচে ডানে পেজ নম্বর, আর "25 / page" ড্রপডাউন (25, 50, 100, 200)। পেজ আর সাইজ URL-এ থাকে (`/ui/history?page=2&size=50`), তাই refresh দিলে বা লিংক পাঠালে একই সারিগুলো আসে। সবচেয়ে নতুন request প্রথম পেজে; **শুধু প্রথম পেজ নিজে নিজে আপডেট হয়**। অন্য পেজে সারি স্থির থাকে (উপরে "page N: not auto-refreshing" লেখা আসে), নতুন করে দেখতে রিফ্রেশ বাটন। ফিল্টার বদলালে আবার পেজ ১-এ ফেরে। মোট সংখ্যা ও "1-25 of 120" লেখা থাকে।
 
 ### Providers (`/ui/providers`)
 প্রতিটা সারি এক provider। **Add provider** বাটন উপরে ডানে।
+**Today** কলাম: এই provider আজ (router-এর ঘড়িতে রাত ১২টা থেকে) কতগুলো সফল request ও কত token সামলেছে। Daily limit দেওয়া থাকলে নিচে "limit ..." লেখা থাকে; সীমা পার হলে লাল হয় ও মাউস ধরলে কারণ দেখায় (তখন router ওই provider এড়িয়ে পরের model-এ যায়)।
 সারির ডানের আইকনগুলো: **🔍 (Keys)** key-এর তালিকা, **⚡** এই provider-এর সব model-এ ছোট test, **✎ (Edit)**, **⏻** চালু/বন্ধ (বন্ধ করলে ওই provider এড়িয়ে যায়), **🗑 (Delete)**।
 "Keys 1/2 ready" মানে ২টার মধ্যে ১টা key ব্যবহারযোগ্য।
 
@@ -163,6 +164,7 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 - **Provider / Model id:** কোন provider-এর কোন আসল model।
 - **Key / pool:** নির্দিষ্ট key-এ আটকানো (pinned) হলে তার নাম, নইলে provider-এর সব key ঘুরে ঘুরে।
 - **Max out:** এক উত্তরে সর্বোচ্চ কত token (ফাঁকা = সীমা নেই)।
+- **Context window** (Edit-এ): model-এর আসল context আকার (provider-এর ডকুমেন্ট থেকে)। ফাঁকা = অজানা।
 - **Fallbacks:** এটা ব্যর্থ হলে পরপর কোন model-এ যাবে।
 - **Price in/out:** প্রতি ১০ লক্ষ token-এর দাম (খরচের আন্দাজের জন্য)।
 - ডানের আইকন: **⚡** ১ token-এর test request পাঠায় (provider ঠিক আছে কি না তাৎক্ষণিক জানায়, ব্যর্থ হলে provider-এর আসল error দেখায়), **✎ Edit**, **🗑 Delete**।
@@ -178,7 +180,8 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 - **Routing:** (ক) **When the model you picked fails** ⇒ `Switch automatically` (ব্যর্থ হলে fallback-এ যাও) বা `Stop and show the error` (যাবে না, আসল error দেখাও), আর ব্যর্থতার আগে কতবার তাৎক্ষণিক retry। (খ) default model আর `opus/sonnet/haiku` কোথায় যাবে।
 - **Pricing:** সব model-এর দাম এক নজরে; **Fill DeepSeek list prices** বাটন; peak-hour গুণক।
 - **Context guard:** ৮ নম্বর অংশ।
-- **Claude Code:** token বাঁচানোর `env` লাইন কপি করার বাক্স।
+- **Memory:** ৮(খ) নম্বর অংশ: router-এর নিজের "স্মৃতি" (পুরনো কথোপকথনের সারাংশ)।
+- **Claude Code:** তোমার `~/.claude/settings.json`-এর জন্য **তৈরি JSON**। Opus/Sonnet/Haiku/background/এক্সট্রা সারির জন্য ড্রপডাউন থেকে model বাছো; নিচে সুন্দর করে সাজানো (multi-line) JSON আপনাআপনি তৈরি হয়, তাতে তোমার আসল port আর `statusline.mjs`-এর আসল পথ বসানো (Mac/Windows-এ ফাঁকা থাকা ফোল্ডারের নামও ঠিকভাবে escape করা)। উপরে-ডানে কপি বাটন। "Compact earlier" ও "Status line" সুইচ দিয়ে অংশ বাদ দেওয়া যায়। `ANTHROPIC_AUTH_TOKEN`-এ নিজের `ROUTER_KEY` বসাবে (UI কখনো আসল key দেখায় না)। ফাইলে আগে থেকে থাকা বাকি সেটিং (যেমন `permissions`) মুছো না, শুধু `env`, `model`, `statusLine` অংশ মিলিয়ে নাও। নিচে আলাদা **Status line only** বাক্সেও শুধু ওই অংশ আছে।
 - **Account:** নিজের password বদলানো।
 - **System:** router-এর version, চলার সময়, ফাইলের পথ, স্বাস্থ্য পরীক্ষা।
 - **Data:** history কতটা জমেছে, **Clear history** (সব মুছে যাবে, users/settings থাকবে)।
@@ -213,10 +216,13 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 1. Models → **Add model**।
 2. **Alias:** `my-gpt` (ছোট হাতের, সংখ্যা, `-`)। **Provider:** ড্রপডাউন থেকে। **Upstream model id:** provider-এর আসল নাম, ঠিক যেভাবে তাদের ডকুমেন্টে আছে (যেমন `deepseek-v4-flash`)। **এটা ভুল হলে provider 400/404 দেবে।**
 3. **Key:** ফাঁকা রাখলে provider-এর সব key ঘুরে ব্যবহার হবে; একটা বাছলে শুধু ওটা।
-4. **Max output tokens:** না দিলে সীমা নেই।
+4. **Max output tokens:** না দিলে সীমা নেই। **Context window:** model-এর আসল আকার দিলে ভালো (ব্যাখ্যা নিচে ৫(ট))।
 5. **Fallback chain:** ব্যর্থ হলে কোন কোন model, ক্রমানুসারে। (একটা model নিজেকে বা ঘুরে নিজেকে fallback দিতে পারে না; loop ধরা পড়লে error বলে।)
 6. **Price:** in / out / cache read (প্রতি ১০ লক্ষ token, USD)। DeepSeek-এর জন্য **peak** সুইচ।
 7. **Save** → সারির **⚡** চাপো। "OK" এলে ঠিক।
+
+### ঙ-১) Model-এর ফর্ম থেকেই নতুন API key বসানো
+Models → **Add model** বা Edit → **Key** ঘরের নিচে **"Paste a new API key for this model"** চাপো। গোপন key বসাও; চাইলে `.env`-এর নাম দাও (ফাঁকা রাখলে নিজে `ZAI_KEY_2` ধরনের নাম বানাবে)। **Save** করলে একবারে তিনটা কাজ হয়: key `.env`-এ লেখা হয়, provider-এর তালিকায় যুক্ত হয়, আর এই model সেই key-তে আটকানো (pinned) হয়। key আর কখনো পুরোটা দেখায় না (শুধু শেষ ৪ অক্ষর)। কোনো কারণে save ব্যর্থ হলে কিছুই তৈরি হয় না। Key-বিহীন provider (Auth mode `none`)-এ এই লিংক আসে না, বদলে লেখা থাকে "needs no key"।
 
 ### ঙ) Model মোছা
 Models → সারির **🗑**। অন্য model-এর fallback তালিকায় থাকলে dialog সতর্ক করবে।
@@ -224,9 +230,19 @@ Models → সারির **🗑**। অন্য model-এর fallback তা
 ### চ) Provider মোছা
 Providers → **🗑**। তার model থাকলে dialog জানাবে; "সহ মুছুন" বললে model-গুলোও যায়। `.env`-এর key-র মান মোছে না, শুধু তালিকা থেকে সরে।
 
+### ছ-১) দৈনিক সীমা (daily limit) দিয়ে আগেই অন্য provider-এ যাওয়া
+কিছু provider-এর দিনে request বা token সীমা আছে (যেমন OpenRouter-এর free model)। Providers → Edit → **Daily request limit** বা **Daily token budget** দাও (ফাঁকা = সীমা নেই)। আজকের সংখ্যা সীমায় পৌঁছালে router **provider-কে প্রশ্নই করে না**, সরাসরি fallback-এ যায়, আর History → Details-এ লেখা থাকে: `daily request limit reached (50 of 50 today)`। Token গণনা = নতুন input + cache read + cache write + output। শুধু সফল request গোনা হয়; রাত ১২টায় (router-এর ঘড়ি) আবার শূন্য। সীমা বাড়ালে বা খালি করলে সঙ্গে সঙ্গে আবার চালু। একসাথে অনেক request গেলে সামান্য বেশি যেতে পারে।
+
 ### ছ) Fallback সাজানো: উদাহরণ
 "glm সবসময় glm-এই চলুক, ব্যর্থ হলে চুপচাপ অন্যটায় যেও না": Models → `glm` → **Fallback chain** খালি করো, অথবা Settings → Routing → **Stop and show the error**।
 "glm ব্যর্থ হলে আগে glm-fast, তারপর ds-flash": `glm`-এর Fallback chain-এ ক্রমানুসারে `glm-fast`, `ds-flash`। (fallback এক স্তরের: `glm`-এর তালিকাই শুধু দেখা হয়, `glm-fast`-এর নিজের তালিকা আবার দেখা হয় না।)
+
+### ট) Fallback model-এর context window ছোট হলে (token বাঁচানো ও নিরাপত্তা)
+ধরো `glm`-এ ১২০K token-এর কথোপকথন চলছে, আর glm ব্যর্থ হয়ে `or-b` (ছোট window)-এ যাচ্ছে। না সামলালে provider "prompt too long" বলে ফেরাত। তাই `or-b`-এর Edit-এ **Context window** দাও (যেমন `128000`)। তখন:
+1. prompt window-এর ৯০%-এর মধ্যে হলে কিছুই বদলায় না।
+2. বড় হলে router আগে **পুরনো tool output ছেঁটে** ফিটে আনে (শুধু এই route-এর জন্য; মূল model অপরিবর্তিত)। **কী ছেঁটেছে সেটা মনে রাখে**, তাই এই route-এ পরের request-এও একই লেখা যায় ও cache কাজ করে।
+3. তাতেও না ধরলে ওই route **এড়িয়ে** পরের fallback-এ যায়, আর History-তে কারণ লেখা থাকে।
+আকার না জানা থাকলে ফাঁকা রাখো, তখন আগের মতোই চলে।
 
 ### জ) দাম বসানো (cost $0.00 হটাতে)
 Settings → Pricing → **Fill DeepSeek list prices** (দাম না-থাকা DeepSeek model-এ বসায়) অথবা Models → Edit → Price। দামগুলো তৃতীয় পক্ষের তথ্যে বসানো; provider-এর নিজের দামের পাতা মিলিয়ে নিও।
@@ -286,6 +302,24 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
    - প্রথমে Measure only-তে কয়েকদিন চালাও, সংখ্যা দেখো, তারপর `On`। ঝুঁকি: agent কখনো পুরনো ফাইল আবার পড়তে পারে।
 3. **অভ্যাস:** অন্য কাজ শুরু করলে `/clear`; বড় কাজ শেষে `/compact`; দিন শেষে `/r-end`, পরদিন `/clear` তারপর `/r-start`।
 
+### ৮(ক) আরও ছোট করার দুটো সুইচ (Settings → Context guard)
+- **Also shrink old tool calls** (ডিফল্ট চালু): পুরনো tool output ছাঁটার সময় ওই tool-এর **ডাকের** ভেতরের বড় লেখাও ছোট হয়। যেমন আগের `Write`-এ পুরো ফাইলের লেখা ছিল, এখন থাকে `[router: 9000 characters cleared ...]`; ফাইলের পথ ও বাকি ঘর থাকে।
+- **Shrink big pasted text in old messages** (ডিফল্ট **বন্ধ**, কারণ এটা তোমার নিজের লেখা বদলায়): তোমার পুরনো মেসেজে বিশাল paste (log, ফাইল) থাকলে প্রথম ১৫০০ আর শেষ ৫০০ অক্ষর থাকে। **তোমার প্রথম মেসেজ আর সবচেয়ে নতুন দুটো কখনো ছোঁয়া হয় না।** "A paste counts as big above" ঘরে সীমা (ডিফল্ট ১২,০০০ অক্ষর)।
+
+### ৮(খ) Router Memory: router নিজে মনে রাখে (Settings → Memory)
+- **কেন:** model-এর স্মৃতি নেই, তাই Claude Code পুরো কথোপকথন আবার পাঠায়। Router memory তার হয়ে মনে রাখে: কথোপকথন লম্বা হলে একটা **সস্তা model** (যেটা তুমি বাছো) **পুরনো মেসেজগুলোর সারাংশ** লেখে। সেটা SQLite-এ জমা থাকে, আর পরের request থেকে পুরনো মেসেজের **বদলে** ওই সারাংশ যায়। প্রতিবার হুবহু একই লেখা যায়, তাই provider-এর cache কাজ করে।
+- **অপেক্ষা করতে হয় না:** যে request সীমা পার করে সেটা আগের মতোই যায়। সারাংশ **পেছনে** লেখা হয়, পরের request থেকে কাজে লাগে।
+- **নিরাপত্তা:** তোমার আসল প্রথম অনুরোধ হুবহু সারাংশের ভেতরে থাকে। সবচেয়ে নতুন মেসেজগুলো কখনো সারাংশ হয় না। কথোপকথনের শুরু বদলে গেলে (যেমন Claude Code নিজে `/compact` করলে) পুরনো সারাংশ আর লাগানো হয় না। সারাংশ-model ব্যর্থ হলে তোমার request অপরিবর্তিত যায়, আর router ৫ মিনিট পরে আবার চেষ্টা করে।
+- **খরচ ও ঝুঁকি:** প্রতিটা সারাংশে একবার ওই model-এর খরচ (History-তে "router memory summary" নামে দেখা যায়; কিছু লুকানো নেই), আর সারাংশ থেকে ছোটখাটো খুঁটিনাটি হারাতে পারে। তাই আগে **Measure only**।
+- **ধাপ:** Settings → Memory → **Model that writes the summaries** বাছো (সস্তা, দ্রুতটা, যেমন `ds-flash`) → **Mode: Measure only** → কয়েকদিন পর "Tokens it would remove" দেখো → ঠিক লাগলে **On**। "Start summarising above" (ডিফল্ট ৮০,০০০) ও "Aim to get down to" (৩৫,০০০) বদলানো যায়।
+- **"What the router remembers now"** তালিকায় প্রতিটা কথোপকথনের সারাংশ আছে: **View** দিয়ে পড়তে পারো, **Forget** দিয়ে মুছলে পরের request-এ আবার পুরো কথোপকথন যায়।
+- **সীমা:** এটা এক কথোপকথনের ভেতরে কাজ করে। `/clear` দিলে নতুন কথোপকথন খালি শুরু হয় (এটাই ঠিক)। এক session থেকে আরেক session-এ স্মৃতি নিতে চাইলে প্রজেক্টের ফাইল (`CLAUDE.md`, `.claude/memory`, `/r-end`) ব্যবহার করো।
+
+### ৮(গ) তোমার prompt-এর টোকেন কোথায় যাচ্ছে (ছোট করার আগে দেখো)
+- **Usage → "Where your prompt tokens go":** গত কয়েকশো request-এর গড়, ভাগে ভাগে: Tool results, System prompt, Tool definitions, Tool calls, AI text, তোমার মেসেজ, Thinking, ছবি।
+- **History → কোনো সারির Details → "What this prompt was made of":** ওই এক request-এর ভাগ।
+- সবচেয়ে বড় ফালিটাই ছোট করার জায়গা। সাধারণত Tool results সবচেয়ে বড় হয়; তখন Context guard আর Memory কাজে লাগে। System prompt বা Tool definitions বড় হলে সেটা Claude Code-এর নিজের (কম প্লাগইন/MCP রাখলে কমে); router সেগুলো বদলায় না।
+
 সফল হলো কি না বুঝবে: Live → Context size-এ `p50` আর `p90` আগের ১০৬K/১৫৬K-এর চেয়ে কমছে কি না।
 
 ---
@@ -305,6 +339,12 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 | UI-তে বারবার login চাইছে | কুকি মুছছে (private window/অন্য domain) | `http://127.0.0.1:21450/ui` ঠিক এই ঠিকানায়, সাধারণ window-এ |
 | Live-এ গতি মিটার নড়ছে না | কোনো request চলছে না | Claude Code-এ কিছু চালাও |
 | Cost `$0.00` | model-এ দাম বসানো নেই | ৫(জ) |
+| Model-এর ফর্মে Key ঘরটা ধূসর | Provider-এর Auth mode `none`, অথবা "Paste a new API key" খোলা আছে | `none` হলে key লাগে না; নতুন key দিতে চাইলে Auth mode বদলাও |
+| Providers-এ Today লাল | daily limit পৌঁছে গেছে | Edit → limit বাড়াও বা খালি করো, নইলে মধ্যরাত পর্যন্ত এড়ানো হবে |
+| History-র পেজ ২-এ সারি নড়ছে না | ইচ্ছাকৃত: শুধু পেজ ১ নিজে আপডেট হয় | রিফ্রেশ বাটন, বা পেজ ১-এ যাও |
+| Memory On করতে গেলে "choose the model..." | সারাংশ লেখার model বাছা হয়নি | Settings → Memory → model বাছো, তারপর On |
+| Memory On, কিন্তু কিছু বদলাচ্ছে না | prompt এখনো "Start summarising above" সীমার নিচে, বা সারাংশ-model ব্যর্থ (৫ মিনিট পর আবার চেষ্টা) | Live/Usage-এ আকার দেখো; router log-এ `[MEMORY]` লাইন; সীমা কমাও |
+| Fallback-এ গিয়ে "does not fit the ... window" | ছোট-window model-এ prompt ধরছে না | ওটা এড়িয়ে পরেরটা চলে; সমাধান: বড় window-এর model আগে রাখো বা `/compact` |
 | OpenRouter model 404 "ZDR" | OpenRouter অ্যাকাউন্টের privacy সেটিং (Zero Data Retention) ওই model-কে আটকাচ্ছে | openrouter.ai/settings/privacy-তে ZDR সীমা বদলাও বা অন্য model নাও |
 
 ---

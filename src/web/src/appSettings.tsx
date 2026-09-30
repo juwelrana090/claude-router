@@ -13,6 +13,13 @@ export interface AppSettings {
   'guard.minChars': number;
   'routing.failover': 'auto' | 'off';
   'routing.retries': number;
+  'guard.trimInputs': boolean;
+  'guard.trimPastes': boolean;
+  'guard.pasteChars': number;
+  'memory.mode': 'off' | 'shadow' | 'on';
+  'memory.model': string;
+  'memory.highTokens': number;
+  'memory.lowTokens': number;
 }
 
 const DEFAULTS: AppSettings = {
@@ -27,6 +34,13 @@ const DEFAULTS: AppSettings = {
   'guard.minChars': 1200,
   'routing.failover': 'auto',
   'routing.retries': 2,
+  'guard.trimInputs': true,
+  'guard.trimPastes': false,
+  'guard.pasteChars': 12_000,
+  'memory.mode': 'shadow',
+  'memory.model': '',
+  'memory.highTokens': 80_000,
+  'memory.lowTokens': 35_000,
 };
 
 interface Ctx {

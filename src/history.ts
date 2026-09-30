@@ -8,8 +8,9 @@ import type { InFlight, RecentEntry } from "./live";
 const insert = db.prepare(`INSERT OR REPLACE INTO requests
   (id, session_id, alias, provider, model, key_name, status, stream, failover, started_at, first_token_at,
    ended_at, duration_ms, ttft_ms, in_tokens, out_tokens, cache_read, cache_write, ctx_tokens, cost, tps,
-   guard_saved, guard_would, asked_alias, requested_model, resolved_via, trace)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    guard_saved, guard_would, asked_alias, requested_model, resolved_via, trace,
+   memory_saved, memory_would, anatomy)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
 /** Called for every finished request, including failures and aborts. Never throws. */
 export function recordFinished(id: string, e: RecentEntry, f?: InFlight): void {
@@ -22,7 +23,8 @@ export function recordFinished(id: string, e: RecentEntry, f?: InFlight): void {
       e.in, e.out, e.cacheRead, e.cacheWrite, e.in + e.cacheRead + e.cacheWrite, e.cost, e.outputTokensPerSec ?? null,
       f?.guardSaved ?? 0, f?.guardWould ?? 0,
     f?.askedAlias ?? null, f?.requestedModel ?? null, f?.resolvedVia ?? null,
-    f?.trace?.length ? JSON.stringify(f.trace) : null,
+      f?.trace?.length ? JSON.stringify(f.trace) : null,
+    f?.memorySaved ?? 0, f?.memoryWould ?? 0, f?.anatomy ? JSON.stringify(f.anatomy) : null,
     );
   } catch (err) {
     console.warn("[HISTORY] write failed:", (err as Error).message);
@@ -38,6 +40,9 @@ export interface HistoryRow {
   /** Alias the client's model name resolved to (what you asked for). `alias` is what answered. */
   askedAlias: string | null; requestedModel: string | null; resolvedVia: string | null;
   trace: { route: string; key?: string; outcome: string; status?: number; detail?: string }[];
+  memorySaved: number; memoryWould: number;
+  /** Estimated prompt tokens by part, as the client sent it. */
+  anatomy: Record<string, number> | null;
 }
 
 type Row = Record<string, string | number | null>;
@@ -53,10 +58,12 @@ const toRow = (r: Row): HistoryRow => ({
   askedAlias: (r.asked_alias as string | null) ?? null, requestedModel: (r.requested_model as string | null) ?? null,
   resolvedVia: (r.resolved_via as string | null) ?? null,
   trace: (() => { try { return r.trace ? JSON.parse(r.trace as string) : []; } catch { return []; } })(),
+  memorySaved: (r.memory_saved as number) ?? 0, memoryWould: (r.memory_would as number) ?? 0,
+  anatomy: (() => { try { return r.anatomy ? JSON.parse(r.anatomy as string) : null; } catch { return null; } })(),
 });
 
 export interface HistoryQuery {
-  limit?: number; before?: number; status?: "ok" | "error"; alias?: string; provider?: string;
+  limit?: number; offset?: number; before?: number; status?: "ok" | "error"; alias?: string; provider?: string;
   q?: string; minCtx?: number;
 }
 
@@ -70,15 +77,17 @@ export function listRequests(q: HistoryQuery): { rows: HistoryRow[]; hasMore: bo
   if (q.provider) { where.push("provider = ?"); args.push(q.provider); }
   if (q.minCtx) { where.push("ctx_tokens >= ?"); args.push(q.minCtx); }
   if (q.q) {
-    where.push("(alias LIKE ? OR model LIKE ? OR provider LIKE ? OR id LIKE ? OR session_id LIKE ?)");
-    const like = `%${q.q.replace(/[%_]/g, "")}%`;
-    args.push(like, like, like, like, like);
+      where.push("(alias LIKE ? OR model LIKE ? OR provider LIKE ? OR id LIKE ? OR session_id LIKE ? OR requested_model LIKE ?)");
+      const like = `%${q.q.replace(/[%_]/g, "")}%`;
+      args.push(like, like, like, like, like, like);
   }
   const base = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM requests ${base}`).get(...args) as { n: number }).n;
   const paged = q.before ? `${base ? base + " AND" : "WHERE"} ended_at < ?` : base;
-  const rows = db.prepare(`SELECT * FROM requests ${paged} ORDER BY ended_at DESC LIMIT ?`)
-    .all(...args, ...(q.before ? [q.before] : []), limit + 1) as unknown as Row[];
+  const offset = Math.max(0, Math.floor(q.offset ?? 0));
+  // Stable order: rows that end in the same millisecond are tie-broken by id, so pages never overlap or skip.
+  const rows = db.prepare(`SELECT * FROM requests ${paged} ORDER BY ended_at DESC, id DESC LIMIT ? OFFSET ?`)
+    .all(...args, ...(q.before ? [q.before] : []), limit + 1, offset) as unknown as Row[];
   return { rows: rows.slice(0, limit).map(toRow), hasMore: rows.length > limit, total };
 }
 
@@ -130,12 +139,62 @@ export function insights(sinceMs: number) {
       p50: pct(ctxs, 0.5), p90: pct(ctxs, 0.9), max: ctxs.length ? ctxs[ctxs.length - 1] : 0,
       overWarn, compactions,
     },
-    guard: guardStats(sinceMs),
+      guard: guardStats(sinceMs),
+      memory: memoryStats(since),
+      anatomy: anatomyTotals(since),
     topSessions: [...sessions.entries()]
       .map(([sessionId, s]) => ({ sessionId, ...s }))
       .sort((a, b) => b.ctxTotal - a.ctxTotal).slice(0, 5),
     hourly: [...hourly.values()].sort((a, b) => a.t - b.t),
   };
+}
+
+/** Start of "today" on the router's own clock. Daily limits reset at this moment. */
+export function startOfToday(now = Date.now()): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+const todayStmt = db.prepare(
+  `SELECT COUNT(*) AS n, COALESCE(SUM(in_tokens + out_tokens + cache_read + cache_write), 0) AS t
+     FROM requests WHERE provider = ? AND ended_at >= ? AND status < 400`,
+);
+
+/** What a provider has served since local midnight (successful requests only). */
+export function providerToday(provider: string): { requests: number; tokens: number } {
+  const r = todayStmt.get(provider, startOfToday()) as { n: number; t: number };
+  return { requests: r.n, tokens: r.t };
+}
+
+/** Router memory over a window: tokens removed, tokens it would remove (shadow), and what the summaries cost. */
+export function memoryStats(since: number) {
+  const r = db.prepare(
+    `SELECT COALESCE(SUM(memory_saved),0) AS s, COALESCE(SUM(memory_would),0) AS w,
+           SUM(CASE WHEN memory_saved > 0 OR memory_would > 0 THEN 1 ELSE 0 END) AS n FROM requests WHERE ended_at >= ?`,
+  ).get(since) as { s: number; w: number; n: number | null };
+  const m = db.prepare(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(source_tokens),0) AS src, COALESCE(SUM(summary_tokens),0) AS sum, COALESCE(SUM(cost),0) AS cost
+      FROM memory_summaries WHERE created_at >= ?`,
+  ).get(since) as { n: number; src: number; sum: number; cost: number };
+  return { requests: r.n ?? 0, saved: r.s, would: r.w, summaries: m.n, summarisedTokens: m.src, summaryTokens: m.sum, cost: m.cost };
+}
+
+/** Average tokens of each prompt part over the most recent 2000 requests in the window. */
+export function anatomyTotals(since: number) {
+  const rows = db.prepare("SELECT anatomy FROM requests WHERE ended_at >= ? AND anatomy IS NOT NULL ORDER BY ended_at DESC LIMIT 2000").all(since) as unknown as { anatomy: string }[];
+  const sum: Record<string, number> = {};
+  let n = 0;
+  for (const r of rows) {
+    try {
+      const a = JSON.parse(r.anatomy) as Record<string, number>;
+      for (const [k, v] of Object.entries(a)) sum[k] = (sum[k] ?? 0) + v;
+      n++;
+    } catch { /* skip */ }
+  }
+  const avg: Record<string, number> = {};
+  for (const [k, v] of Object.entries(sum)) avg[k] = n ? Math.round(v / n) : 0;
+  return { requests: n, average: avg };
 }
 
 // ---------- housekeeping ----------
@@ -171,8 +230,8 @@ export function backfillFromJsonl(): number {
           j.startedAt ? Date.parse(j.startedAt) : ended - dur, j.firstTokenAt ? Date.parse(j.firstTokenAt) : null,
           ended, dur, j.ttftMs ?? null, j.in ?? 0, j.out ?? 0, j.cacheRead ?? 0, j.cacheWrite ?? 0,
           (j.in ?? 0) + (j.cacheRead ?? 0) + (j.cacheWrite ?? 0), j.cost ?? 0, j.outputTokensPerSec ?? null, 0, 0,
-          null, null, null, null,
-        );
+          null, null, null, null, 0, 0, null,
+          );
         n++;
       } catch { /* skip malformed line */ }
     }

@@ -76,6 +76,7 @@ import {
   Flex,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -89,6 +90,7 @@ import {
 import type { TableColumnsType } from 'antd';
 import { useCallback, useEffect, useState, type ComponentType } from 'react';
 import { ApiError, api } from '../api';
+import { fmtCompact } from '../format';
 
 // ---------- Accurate admin view types (server shapes) ----------
 
@@ -118,6 +120,12 @@ export interface AdminProviderView {
   keysHealthy: number;
   models: string[];
   lastUsed?: number;
+  /** Optional daily caps (null = unlimited) and what the provider has served since local midnight. */
+  dailyRequests?: number | null;
+  dailyTokens?: number | null;
+  today?: { requests: number; tokens: number };
+  /** Set when a daily cap is already reached (the router skips this provider). */
+  budgetReason?: string | null;
 }
 
 export interface AdminModelView {
@@ -441,6 +449,8 @@ interface ProviderFormValues {
   dropBeta: boolean;
   dropBodyFields?: string[];
   disabled: boolean;
+  dailyRequests?: number | null;
+  dailyTokens?: number | null;
   keys?: { envName?: string; value?: string }[];
 }
 
@@ -472,6 +482,8 @@ function ProviderFormModal({
             dropBeta: provider.dropBeta,
             dropBodyFields: provider.dropBodyFields,
             disabled: provider.disabled,
+            dailyRequests: provider.dailyRequests ?? null,
+            dailyTokens: provider.dailyTokens ?? null,
           }
         : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false, keys: [{}] },
     );
@@ -494,6 +506,8 @@ function ProviderFormModal({
             dropBeta: values.dropBeta,
             dropBodyFields: values.dropBodyFields ?? [],
             disabled: values.disabled,
+            dailyRequests: values.dailyRequests ?? null,
+            dailyTokens: values.dailyTokens ?? null,
           }),
         }),
       );
@@ -509,6 +523,8 @@ function ProviderFormModal({
             dropBeta: values.dropBeta,
             dropBodyFields: values.dropBodyFields ?? [],
             disabled: values.disabled,
+            ...(values.dailyRequests ? { dailyRequests: values.dailyRequests } : {}),
+            ...(values.dailyTokens ? { dailyTokens: values.dailyTokens } : {}),
             keys:
               values.auth === 'none'
                 ? []
@@ -591,6 +607,20 @@ function ProviderFormModal({
             }
           </Form.Item>
         )}
+        <Form.Item
+          name="dailyRequests"
+          label="Daily request limit"
+          tooltip="Optional. When this many successful requests were served today (router clock, resets at midnight), the router skips this provider and uses the next model in the fallback list, instead of waiting for the provider to refuse. Leave empty for no limit. Free tiers often have one, e.g. OpenRouter free models."
+        >
+          <InputNumber min={1} style={{ width: '100%' }} placeholder="no limit" />
+        </Form.Item>
+        <Form.Item
+          name="dailyTokens"
+          label="Daily token budget"
+          tooltip="Optional. Same idea, counted in tokens: fresh input + cache read + cache write + output. Leave empty for no limit."
+        >
+          <InputNumber min={10000} step={100000} style={{ width: '100%' }} placeholder="no limit" />
+        </Form.Item>
         <Form.Item
           name="dropBodyFields"
           label="Drop body fields"
@@ -949,6 +979,29 @@ function ProvidersInner() {
           {p.keyless ? 'no key needed' : `${p.keysHealthy}/${p.keysTotal} ready`}
         </Button>
       ),
+    },
+    {
+      title: 'Today',
+      width: 190,
+      render: (_, p) => {
+        const t = p.today ?? { requests: 0, tokens: 0 };
+        const parts: string[] = [`${fmtCompact(t.requests)} req`, `${fmtCompact(t.tokens)} tok`];
+        const hit = !!p.budgetReason;
+        return (
+          <Tooltip title={p.budgetReason ? `${p.budgetReason}. The router skips this provider until midnight or until you raise the limit.` : 'Served since midnight (router clock). Set daily limits in Edit.'}>
+            <div style={{ lineHeight: 1.3 }}>
+              <Text style={{ color: hit ? '#E5675F' : undefined }}>{parts.join(' · ')}</Text>
+              {(p.dailyRequests || p.dailyTokens) && (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    limit {p.dailyRequests ? `${fmtCompact(p.dailyRequests)} req` : ''}{p.dailyRequests && p.dailyTokens ? ' · ' : ''}{p.dailyTokens ? `${fmtCompact(p.dailyTokens)} tok` : ''}
+                  </Text>
+                </div>
+              )}
+            </div>
+          </Tooltip>
+        );
+      },
     },
     {
       title: 'Models',

@@ -1,5 +1,5 @@
 import { Table, Tag, Tooltip, Typography } from 'antd';
-import type { TableColumnsType } from 'antd';
+import type { TableColumnsType, TablePaginationConfig } from 'antd';
 import { fmtCompact, fmtDateTime, fmtExact, fmtMs, fmtPct, fmtTps, fmtUsd } from '../format';
 import type { HistoryRow, RunningRow } from '../types';
 
@@ -82,6 +82,7 @@ export function RequestTable(props: {
   warnTokens: number;
   onOpen?: (r: HistoryRow) => void;
   compact?: boolean;
+  pagination?: TablePaginationConfig | false;
 }) {
   return (
     <Table<Row>
@@ -90,7 +91,7 @@ export function RequestTable(props: {
       loading={props.loading}
       columns={requestColumns(props.warnTokens, props.onOpen)}
       dataSource={props.rows}
-      pagination={false}
+      pagination={props.pagination ?? false}
       scroll={{ x: 980 }}
     />
   );
