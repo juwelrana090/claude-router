@@ -5,5 +5,7 @@
 /prompt/04-web-providers-models-settings.md
 /prompt/05-context-guard.md
 /prompt/06-claude-code-settings.md
+/prompt/07-routing-visibility.md
+/prompt/08-bangla-guide.md
 
 read all /prompt/\*.md file start task one by one

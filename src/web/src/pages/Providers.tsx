@@ -100,6 +100,8 @@ export interface AdminKeyView {
   last4: string;
   cooldownSeconds: number;
   cooling: boolean;
+  /** Why the key is resting, e.g. "HTTP 429: code 1113: Insufficient balance". */
+  cooldownReason?: string | null;
   lastUsed?: number;
 }
 
@@ -727,8 +729,8 @@ function KeysModal({
         !k.configured ? (
           <Tag color="red">not set</Tag>
         ) : k.cooling ? (
-          <Tooltip title={`Cooling down for another ${k.cooldownSeconds}s`}>
-            <Tag color="orange">cooling {k.cooldownSeconds}s</Tag>
+          <Tooltip title={`Resting for another ${k.cooldownSeconds}s${k.cooldownReason ? `. Last error: ${k.cooldownReason}` : ''}. While it rests, requests skip this key and use the next model in the fallback list.`}>
+            <Tag color="orange">resting {k.cooldownSeconds}s</Tag>
           </Tooltip>
         ) : (
           <Tag color="green">ready</Tag>

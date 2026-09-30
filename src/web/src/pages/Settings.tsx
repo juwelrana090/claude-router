@@ -109,7 +109,15 @@ function Routing() {
   const [st, setSt] = useState<RoutingState | null>(null);
   const load = useCallback(() => api<RoutingState>('/admin/settings').then(setSt), []);
   useEffect(() => { void load(); }, [load]);
+  const { settings, reload } = useAppSettings();
   if (!st) return null;
+  const saveApp = async (v: Record<string, unknown>) => {
+    try {
+      await api('/admin/app-settings', { method: 'PUT', body: JSON.stringify({ settings: v }) });
+      await reload();
+      message.success('Saved');
+    } catch (e) { message.error(cleanErr(e)); }
+  };
   const opts = [{ value: '', label: '— none —' }, ...st.models.map((m) => ({ value: m, label: m }))];
   const save = async (patch: Partial<Pick<RoutingState, 'defaultModel' | 'aliases'>>) => {
     try {
@@ -119,6 +127,24 @@ function Routing() {
     } catch (e) { message.error(cleanErr(e)); }
   };
   return (
+    <>
+    <Section
+      title="When the model you picked fails"
+      description={<>Each model can have a fallback list (Models page). <b>Switch automatically</b> keeps you working when a provider runs out of balance or hits a limit, but it means a different model answers. Every such switch is shown in History as a red “asked …” tag with the reason. <b>Stop and show the error</b> never switches: you see the provider's own error in Claude Code. Before it switches or stops, the router retries a rate limit (HTTP 429) on the same key a few times, because those usually clear in a second or two. Errors about balance, quota or permission are not retried.</>}
+    >
+      <Form layout="vertical" disabled={!isAdmin}>
+        <Form.Item label="Behaviour">
+          <Segmented
+            value={settings['routing.failover']}
+            onChange={(v) => void saveApp({ 'routing.failover': v })}
+            options={[{ value: 'auto', label: 'Switch automatically' }, { value: 'off', label: 'Stop and show the error' }]}
+          />
+        </Form.Item>
+        <Form.Item label="Quick retries on the same key before giving up" tooltip="0 = never retry. Only short rate-limit and network errors are retried.">
+          <InputNumber min={0} max={5} value={settings['routing.retries']} onChange={(v) => v != null && void saveApp({ 'routing.retries': v })} style={{ width: 120 }} />
+        </Form.Item>
+      </Form>
+    </Section>
     <Section title="Which model answers by default" description="Claude Code asks for opus / sonnet / haiku (or any alias you type with /model). These decide where those names go. A name the router does not know falls back to the default model.">
       <Form layout="vertical" disabled={!isAdmin}>
         <Form.Item label="Default model (used for unknown names)">
@@ -131,6 +157,7 @@ function Routing() {
         ))}
       </Form>
     </Section>
+    </>
   );
 }
 

@@ -1,3 +1,5 @@
+> বাংলা গাইড (সব পেজ, বাটন, env সেটিং ও সমস্যার সমাধান): [GUIDE-BN.md](GUIDE-BN.md)
+
 # claude-router
 
 A local proxy that lets Claude Code route to DeepSeek, Z.AI, OpenRouter and OpenCode.

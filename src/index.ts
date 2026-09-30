@@ -12,7 +12,9 @@ import * as history from "./history";
 import * as eta from "./eta";
 import * as live from "./live";
 import { costOf } from "./pricing";
-import { buildBody, buildHeaders, keyOrder, resolveAlias } from "./routing";
+import { classifyFailure } from "./failure";
+import { getSetting } from "./db";
+import { buildBody, buildHeaders, keyOrder, resolveModel } from "./routing";
 
 if (!ROUTER_KEY) {
   console.error("ROUTER_KEY is missing in .env - refusing to start without auth.");
@@ -149,6 +151,12 @@ async function relay(
   const ct = up.headers.get("content-type");
   if (ct) res.setHeader("content-type", ct);
   res.setHeader("x-router-route", `${m.provider}/${m.model}`);
+  if (track?.askedAlias && track.askedAlias !== alias) {
+    const clean = (v: string) => v.replace(/[^\x20-\x7E]/g, "?").slice(0, 300);
+    res.setHeader("x-router-asked", clean(track.askedAlias));
+    res.setHeader("x-router-served", clean(alias));
+    res.setHeader("x-router-failover", clean((track.trace ?? []).filter((t) => t.outcome !== "served").map((t) => `${t.route}: ${t.detail ?? t.outcome}`).join(" | ")));
+  }
 
   const streamed = !!(body.stream && up.body);
   let firstTokenAt = 0;
@@ -247,16 +255,26 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   const c: Config = getCfg();
-  const alias = resolveAlias(c, body.model);
-  if (!alias) {
+  const resolved = resolveModel(c, body.model);
+  if (!resolved) {
     return fail(res, 400, "invalid_request_error",
       `Unknown model "${body.model}". Available: ${Object.keys(c.models).join(", ")}`);
   }
+  const alias = resolved.alias;
 
   const meta = body.metadata as { user_id?: string } | undefined;
   const seed = String(meta?.user_id ?? JSON.stringify(body.system ?? "").slice(0, 4000));
   const sessionId = "u-" + crypto.createHash("sha1").update(seed).digest("hex").slice(0, 12);
-  const chain = [alias, ...(c.models[alias].fallback ?? [])].filter((n) => c.models[n]);
+  // "off" = the model you picked answers or you see its real error; "auto" = move down the fallback list.
+  const failoverOn = (getSetting("routing.failover") as string) !== "off";
+  const retries = Number(getSetting("routing.retries"));
+  const chain = (failoverOn ? [alias, ...(c.models[alias].fallback ?? [])] : [alias]).filter((n) => c.models[n]);
+  const trace: live.TraceStep[] = [];
+  const addTrace = (t: live.TraceStep): void => { if (trace.length < 14) trace.push(t); };
+  const summary = (): string =>
+    trace.filter((t) => t.outcome !== "served")
+      .map((t) => `${t.route}${t.key ? ` (${t.key})` : ""}: ${t.outcome === "retry" ? "retried, " : ""}${t.detail ?? t.outcome}`)
+      .join(" | ");
 
   // Context guard: clear OLD tool outputs (remembered per session) before the prompt goes upstream.
   const guard = applyGuard(body, sessionId);
@@ -269,44 +287,70 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   res.on("close", () => ac.abort());
 
   let lastStatus = 503;
-  let lastText = JSON.stringify({
-    type: "error",
-    error: { type: "api_error", message: "No usable upstream key (missing or cooling down)" },
-  });
+  let lastText = "";
 
   // One tracked request for the whole chain: failovers keep the same requestId
   // and the terminal eta event is emitted exactly once, after the last route.
   let track: live.InFlight | undefined;
+  const begin = (routeName: string, keyName: string): live.InFlight => {
+    const m = c.models[routeName];
+    const t = live.startRequest({
+      alias: routeName,
+      provider: m.provider,
+      model: m.model,
+      keyName,
+      startedAt: Date.now(),
+      stream: !!body.stream,
+      status: "connecting",
+      sessionId,
+      maxTokens: Number(body.max_tokens) || 0,
+      clientStartedAt: started,
+    });
+    eta.begin(t);
+    t.guardSaved = guard.result.saved;
+    t.guardWould = guard.result.would;
+    t.askedAlias = alias;
+    t.requestedModel = String(body.model);
+    t.resolvedVia = resolved.via;
+    t.trace = trace;
+    return t;
+  };
+  const sleep = (ms: number) => new Promise<void>((r) => {
+    const t = setTimeout(r, ms);
+    ac.signal.addEventListener("abort", () => { clearTimeout(t); r(); }, { once: true });
+  });
+  const aborted = (routeName: string, keyName: string): void => {
+    const m = c.models[routeName];
+    live.finishRequest(track!.id, {
+      alias: routeName, provider: m.provider, model: m.model, key: keyName, status: 499,
+      ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
+    });
+  };
 
   for (const routeName of chain) {
     const m = c.models[routeName];
     const p: ProviderCfg | undefined = c.providers[m.provider];
     if (!p || p.disabled) {
-      if (p?.disabled) console.warn(`[ROUTER] provider ${m.provider} is disabled, skipping`);
+      addTrace({ route: routeName, outcome: "skipped", detail: p ? `provider ${m.provider} is disabled` : `provider ${m.provider} does not exist` });
+      continue;
+    }
+    const keys = keyOrder(p, m, seed);
+    if (!keys.length) {
+      addTrace({ route: routeName, outcome: "skipped", detail: m.key ? `${m.key} is empty or missing in .env` : `no keys set for provider ${m.provider}` });
       continue;
     }
 
-    for (const keyName of keyOrder(p, m, seed)) {
-      if ((live.cooldown.get(keyName) ?? 0) > Date.now()) continue;
+    for (const keyName of keys) {
+      const left = live.cooldownLeft(keyName);
+      if (left > 0) {
+        const info = live.coolInfoFor(keyName);
+        addTrace({ route: routeName, key: keyName, outcome: "skipped", status: info?.status, detail: `resting ${Math.ceil(left / 1000)}s after ${info?.reason ?? "an earlier failure"}` });
+        continue;
+      }
 
       console.log(`[ROUTER] ${body.model} -> ${routeName} (${m.provider}/${m.model}) key=${keyName}`);
-      if (!track) {
-        track = live.startRequest({
-          alias: routeName,
-          provider: m.provider,
-          model: m.model,
-          keyName,
-          startedAt: Date.now(),
-          stream: !!body.stream,
-          status: "connecting",
-          sessionId,
-          maxTokens: Number(body.max_tokens) || 0,
-          clientStartedAt: started,
-        });
-        eta.begin(track);
-        track.guardSaved = guard.result.saved;
-        track.guardWould = guard.result.would;
-      } else if (track.alias !== routeName || track.keyName !== keyName) {
+      if (!track) track = begin(routeName, keyName);
+      else if (track.alias !== routeName || track.keyName !== keyName) {
         // Same logical request on a new route/key: keep the live frames accurate.
         track.alias = routeName;
         track.provider = m.provider;
@@ -314,56 +358,86 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         track.keyName = keyName;
       }
 
-      let up: Response;
-      try {
-        up = await fetch(`${p.baseURL}/v1/messages`, {
-          method: "POST",
-          headers: buildHeaders(req, p, keyName),
-          body: buildBody(upstreamBody, m, p),
-          signal: ac.signal,
-        });
-      } catch (e) {
-        if (ac.signal.aborted) {
-          live.finishRequest(track.id, {
-            alias: routeName, provider: m.provider, model: m.model, key: keyName, status: 499,
-            ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
+      for (let attempt = 0; ; attempt++) {
+        let up: Response;
+        try {
+          up = await fetch(`${p.baseURL}/v1/messages`, {
+            method: "POST",
+            headers: buildHeaders(req, p, keyName),
+            body: buildBody(upstreamBody, m, p),
+            signal: ac.signal,
           });
-          return;
+        } catch (e) {
+          if (ac.signal.aborted) { aborted(routeName, keyName); return; }
+          const f = classifyFailure(0, null, (e as Error).message, live.streakOf(keyName));
+          if (f.retryable && attempt < retries && live.streakOf(keyName) === 0) {
+            addTrace({ route: routeName, key: keyName, outcome: "retry", detail: `${f.snippet} (waiting ${f.waitMs} ms)` });
+            await sleep(f.waitMs);
+            if (ac.signal.aborted) { aborted(routeName, keyName); return; }
+            continue;
+          }
+          live.cool(keyName, f.cooldownMs, { status: 0, reason: f.reason });
+          addTrace({ route: routeName, key: keyName, outcome: "failed", detail: `unreachable: ${f.snippet}` });
+          live.setFailover(track.id, { from: keyName, status: 0, reason: `unreachable: ${f.snippet}` });
+          lastStatus = 502;
+          lastText = JSON.stringify({ type: "error", error: { type: "api_error", message: `Upstream unreachable: ${f.snippet}` } });
+          break;
         }
-        live.cool(keyName, 15_000);
-        live.setFailover(track.id, { from: keyName, status: 0, reason: `unreachable: ${(e as Error).message}` });
-        lastStatus = 502;
-        lastText = JSON.stringify({ type: "error", error: { type: "api_error", message: `Upstream unreachable: ${(e as Error).message}` } });
-        continue;
-      }
 
-      if ([401, 402, 403, 429].includes(up.status) || up.status >= 500) {
-        const retryAfter = Number(up.headers.get("retry-after")) * 1000;
-        const ms = up.status === 429 ? Math.min(retryAfter || 60_000, 300_000)
-          : up.status >= 500 ? 15_000 : 600_000;
-        live.cool(keyName, ms);
-        lastStatus = up.status;
-        try { lastText = await up.text(); } catch { /* error body unreadable -> keep the last one */ }
-        live.setFailover(track.id, { from: keyName, status: up.status, reason: `${up.status} on ${keyName}` });
-        console.warn(`[ROUTER] ${keyName} -> ${up.status}, cooling ${Math.round(ms / 1000)}s, trying next`);
-        continue;
-      }
+        if ([401, 402, 403, 429].includes(up.status) || up.status >= 500) {
+          let text = "";
+          try { text = await up.text(); } catch { /* error body unreadable */ }
+          const f = classifyFailure(up.status, up.headers.get("retry-after"), text, live.streakOf(keyName));
+          if (f.retryable && f.kind === "transient" && attempt < retries && f.waitMs <= 10_000 && live.streakOf(keyName) === 0) {
+            addTrace({ route: routeName, key: keyName, outcome: "retry", status: up.status, detail: `${f.snippet || `HTTP ${up.status}`} (waiting ${f.waitMs} ms)` });
+            await sleep(f.waitMs);
+            if (ac.signal.aborted) { aborted(routeName, keyName); return; }
+            continue;
+          }
+          live.cool(keyName, f.cooldownMs, { status: up.status, reason: f.reason });
+          lastStatus = up.status;
+          lastText = text || lastText;
+          addTrace({ route: routeName, key: keyName, outcome: "failed", status: up.status, detail: f.snippet || `HTTP ${up.status}` });
+          live.setFailover(track.id, { from: keyName, status: up.status, reason: f.reason });
+          console.warn(`[ROUTER] ${keyName} -> ${f.reason}; resting ${Math.round(f.cooldownMs / 1000)}s${failoverOn ? ", trying next" : ", failover is off"}`);
+          break;
+        }
 
-      return relay(up, res, body, routeName, m, keyName, started, track);
+        live.noteSuccess(keyName);
+        addTrace({ route: routeName, key: keyName, outcome: "served", status: up.status });
+        if (routeName !== alias) console.warn(`[ROUTER] asked "${body.model}" (${alias}) but served by ${routeName}: ${summary()}`);
+        return relay(up, res, body, routeName, m, keyName, started, track);
+      }
     }
   }
 
-  // The whole chain failed: close the tracked request exactly once, after every
-  // route had its chance (failover successes never reach this terminal frame).
-  if (track && live.inFlight.has(track.id)) {
+  // The whole chain failed (or nothing could even be tried): record it and say exactly why.
+  const why = summary() || "no route could be tried";
+  const note = failoverOn ? "" : " Failover is off (Settings > Routing).";
+  if (!track) {
+    const first = c.models[chain[0] ?? alias];
+    track = begin(chain[0] ?? alias, first?.key ?? "-");
+    lastStatus = 503;
+  }
+  let outText = lastText;
+  let isJsonError = false;
+  try { isJsonError = !!JSON.parse(outText)?.error; } catch { /* not JSON */ }
+  if (!isJsonError) {
+    outText = JSON.stringify({
+      type: "error",
+      error: { type: "api_error", message: `Model "${body.model}" (${alias}) is unavailable. ${why}.${note}` },
+    });
+  }
+  if (live.inFlight.has(track.id)) {
     live.finishRequest(track.id, {
       alias: track.alias, provider: track.provider, model: track.model, key: track.keyName, status: lastStatus,
       ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
     });
   }
 
+  res.setHeader("x-router-trace", why.replace(/[^\x20-\x7E]/g, "?").slice(0, 400));
   res.writeHead(lastStatus, { "content-type": "application/json" });
-  res.end(lastText);
+  res.end(outText);
 }
 
 // ---------- UI ----------

@@ -128,7 +128,9 @@ export default function HistoryPage() {
             <Descriptions.Item label="Request">{open.id}</Descriptions.Item>
             <Descriptions.Item label="Status">{open.status >= 400 ? <Tag color="error">{open.status}</Tag> : <Tag color="success">{open.status}</Tag>}{open.failover && <Tag color="warning">failover used</Tag>}</Descriptions.Item>
             <Descriptions.Item label="Started">{fmtDateTime(open.startedAt)}</Descriptions.Item>
-            <Descriptions.Item label="Model">{open.alias} → {open.provider}/{open.model}</Descriptions.Item>
+            <Descriptions.Item label="Client asked for">{open.requestedModel ?? '—'}{open.resolvedVia ? ` (${open.resolvedVia === 'exact' ? 'exact alias' : open.resolvedVia === 'alias' ? 'matched by the opus/sonnet/haiku map' : 'unknown name, sent to the default model'})` : ''}</Descriptions.Item>
+            <Descriptions.Item label="Router chose">{open.askedAlias ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="Answered by">{open.alias} → {open.provider}/{open.model}</Descriptions.Item>
             <Descriptions.Item label="Key">{open.key ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Session">{open.sessionId ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Context (prompt)">{fmtExact(open.ctx)} ({fmtCompact(open.ctx)})</Descriptions.Item>
@@ -140,6 +142,22 @@ export default function HistoryPage() {
             <Descriptions.Item label="Duration">{fmtMs(open.durationMs)}</Descriptions.Item>
             <Descriptions.Item label="Cost (estimate)">{fmtUsd(open.cost)}</Descriptions.Item>
           </Descriptions>
+        )}
+        {open && open.trace.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong>Route taken</Typography.Text>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+              {open.trace.map((t, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                  <Tag color={t.outcome === 'served' ? 'success' : t.outcome === 'retry' ? 'processing' : t.outcome === 'failed' ? 'error' : 'warning'} style={{ margin: 0 }}>{t.outcome}</Tag>
+                  <span>
+                    <b>{t.route}</b>{t.key ? ` · ${t.key}` : ''}
+                    {t.detail ? <Typography.Text type="secondary"> — {t.detail}</Typography.Text> : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </Drawer>
       <Space />

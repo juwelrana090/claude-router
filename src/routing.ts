@@ -6,18 +6,26 @@ export function headerValue(v: string | string[] | undefined): string | undefine
   return Array.isArray(v) ? v.join(",") : v;
 }
 
-export function resolveAlias(c: Config, raw: string): string | undefined {
+export type ResolvedVia = "exact" | "alias" | "default";
+
+/** How a client-sent model name became a router alias, and why (shown in History). */
+export function resolveModel(c: Config, raw: string): { alias: string; via: ResolvedVia } | undefined {
   const name = raw.replace(/\[[^\]]*\]$/, "").trim(); // "sonnet[1m]" -> "sonnet"
-  if (c.models[name]) return name;
+  if (c.models[name]) return { alias: name, via: "exact" };
   const lower = name.toLowerCase();
+  if (c.models[lower]) return { alias: lower, via: "exact" }; // "GLM" -> "glm"
   for (const [needle, target] of Object.entries(c.aliases ?? {})) {
-    if (lower.includes(needle) && c.models[target]) return target;
+    if (lower.includes(needle) && c.models[target]) return { alias: target, via: "alias" };
   }
   if (c.defaultModel && c.models[c.defaultModel]) {
     console.warn(`[ROUTER] unknown model "${raw}" -> default "${c.defaultModel}"`);
-    return c.defaultModel;
+    return { alias: c.defaultModel, via: "default" };
   }
   return undefined;
+}
+
+export function resolveAlias(c: Config, raw: string): string | undefined {
+  return resolveModel(c, raw)?.alias;
 }
 
 // Sticky key choice keeps the provider-side prompt cache warm (cache is per account/key).

@@ -12,13 +12,15 @@
 | 4 | `04-web-providers-models-settings.md` | Provider যোগ করার সময় key দেওয়া, Settings-এর ৮টা ট্যাব |
 | 5 | `05-context-guard.md` | **প্রতি request-এ পুরনো tool output আবার পাঠানো বন্ধ** (নিচে ব্যাখ্যা) |
 | 6 | `06-claude-code-settings.md` | Claude Code-এর settings, যাতে conversation ছোট থাকে |
+| 7 | `07-routing-visibility.md` | **"glm বাছলাম, ds-flash চলল" সমস্যা:** কে উত্তর দিল, কেন সেটা দেখানো; ব্যর্থতা সামলানোর নিয়ম ঠিক করা; auto-switch চালু/বন্ধ করার সুইচ |
+| 8 | `08-bangla-guide.md` | প্রজেক্টের ভেতরে থাকা বাংলা গাইড (`GUIDE-BN.md`): সব পেজ, বাটন, env, উদাহরণ |
 
 প্রতিটা ফাইল শেষ হলে local AI-কে বলবে verify কমান্ডের **আসল output** দেখাতে। সব শেষে router একবার restart করবে (PM2 বা `npm run serve`) এবং browser hard-refresh দেবে।
 
 ## যাচাই (আমি কী চালিয়ে দেখেছি)
 
-- 01–05 প্রম্পটের কোড তোমার আসল zip-এর একটা পরিষ্কার কপিতে **শুধু প্রম্পট থেকে** বসিয়ে দেখেছি: ৩৯টা অংশ সব বসেছে, ০টা ব্যর্থ, ৬৫টা source ফাইল আমার টেস্ট করা কপির সাথে হুবহু মিলেছে।
-- সেই কপি build হয়েছে এবং তিনটা test suite পাস করেছে: `smoke` (proxy), `admin-smoke` (admin API), `guard-smoke` (context guard)।
+- 01–05, 07, 08 প্রম্পটের কোড তোমার আসল zip-এর একটা পরিষ্কার কপিতে **শুধু প্রম্পট থেকে** বসিয়ে দেখেছি: ৫৬টা অংশ সব বসেছে, ০টা ব্যর্থ, ৬৭টা ফাইল (বাংলা গাইড সহ) আমার টেস্ট করা কপির সাথে হুবহু মিলেছে।
+- সেই কপি build হয়েছে এবং চারটা test suite পাস করেছে: `smoke` (proxy), `admin-smoke` (admin API), `guard-smoke` (context guard), `routing-smoke` (কে উত্তর দিল, retry, failover বন্ধ/চালু)।
 - Browser (headless Chromium) দিয়ে UI চালিয়েছি: প্রথমবার admin তৈরি, login, ভুল password-এর বার্তা, refresh করলে একই পেজে থাকা, সব পেজ, Settings ট্যাব, light theme, search। কোনো page error নেই।
 - **যা যাচাই করতে পারিনি:** আসল Claude Code request চলার সময় speedometer নড়ছে কি না; আর context guard তোমার আসল conversation-এ কতটা বাঁচাবে (সেটা shadow mode মাপবে)।
 
@@ -49,3 +51,12 @@
 - প্রথমবার `/ui` খুললে "admin account তৈরি করো" ফর্ম আসবে (শুধু এই কম্পিউটার থেকে)। তারপর username/password। আর "ROUTER_KEY required" popup আসবে না।
 - Admin অন্য user যোগ করতে পারে (Users পেজ); সাধারণ user শুধু দেখতে পারে, বদলাতে পারে না।
 - `ROUTER_KEY` এখনও Claude Code ও `statusline` স্ক্রিপ্টের জন্য দরকার। ওটা বদলিও না। তুমি `settings.json`-এ যে পাসওয়ার্ড-ধরনের ছোট key রেখেছিলে সেটা দুর্বল; লম্বা random string করে `.env` ও `settings.json` দুই জায়গায় একই মান দিও।
+
+
+## "glm বাছলাম, ds-flash চলল": আমি কী পেয়েছি (07 নম্বর ফাইল)
+
+তোমার নিজের `data/router.db` থেকে: শেষের ৬৫টা request-এর **সবগুলো** `ds-flash` উত্তর দিয়েছে, `glm` একটাও না। তার ৯টা "failover" চিহ্নিত, ৬৪, ৮৭, ১০০ সেকেন্ড পরপর।
+পুরনো কোডে এটার মানে: Z.ai-র key একবার ব্যর্থ হলে router সেই key ৬০ সেকেন্ড (401/402/403 হলে ১০ মিনিট) বিশ্রামে পাঠায়, আর বিশ্রামের সময় `glm` **চুপচাপ এড়িয়ে** `ds-flash` চালায়। Claude Code ঠিকঠাক উত্তর পায়, তাই কোনো error দেখায় না। বিশ্রাম শেষে আবার glm চেষ্টা, আবার ব্যর্থ, চক্র চলতে থাকে।
+
+**যা আমি জানি না:** Z.ai *কেন* ব্যর্থ হচ্ছে (balance? plan? limit? model id?), আর VS Code আসলে কোন নাম পাঠাচ্ছে। দুটোই এখান থেকে দেখা যায় না। 07 বসালে দুটোই স্ক্রিনে দেখা যাবে।
+**দুটো পরীক্ষা:** (১) Models → `glm` → ⚡, Z.ai-র আসল উত্তর পড়ো। (২) History → নতুন সারি → Details → **Client asked for** দেখো: সেখানে `ds-flash` থাকলে VS Code-ই সেই নাম পাঠিয়েছে (Anthropic-এর নিজের GitHub রিপোর্টে আছে: VS Code সেটিংসের `claudeCode.environmentVariables`-এ `ANTHROPIC_MODEL` থাকলে extension-এর `/model` কাজ করে না, Terminal-এ করে)।

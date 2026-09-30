@@ -13,7 +13,7 @@ import { DATA_DIR, DB_FILE, SETTING_DEFAULTS, allSettings, db, setSetting } from
 import { userCount } from "./auth";
 import * as history from "./history";
 import {
-  MAX_SSE_CLIENTS, RECENT_MAX, addClient, cooldownLeft, dropClient, inFlight,
+  MAX_SSE_CLIENTS, RECENT_MAX, addClient, cooldownLeft, coolInfoFor, dropClient, inFlight,
   lastUsedKey, lastUsedProvider, providerRollup, recent, resetCooldown, rollup, sseClientCount,
 } from "./live";
 import { buildHeaders, keyOrder } from "./routing";
@@ -91,6 +91,7 @@ interface KeyView {
   last4: string;
   cooldownSeconds: number;
   cooling: boolean;
+  cooldownReason: string | null;
   lastUsed?: number;
 }
 
@@ -103,6 +104,7 @@ function keyView(envName: string): KeyView {
     last4: v ? v.slice(-4) : "",
     cooldownSeconds: Math.ceil(left / 1000),
     cooling: left > 0,
+    cooldownReason: left > 0 ? (coolInfoFor(envName)?.reason ?? null) : null,
     lastUsed: lastUsedKey(envName),
   };
 }
@@ -1021,6 +1023,7 @@ on("GET", /^\/admin\/requests$/, (req, res) => {
     running: [...inFlight.values()].map((f) => ({
       id: f.id, alias: f.alias, provider: f.provider, model: f.model, key: f.keyName, startedAt: f.startedAt,
       stream: f.stream, status: f.status, failover: !!f.failover, outSoFar: f.outSoFar ?? 0, tokensPerSec: f.tokensPerSec ?? null,
+      askedAlias: f.askedAlias ?? null,
     })),
   });
 });
@@ -1055,7 +1058,11 @@ on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
     else if (k === "pricing.peakMultiplier") {
       const n = Number(input[k]);
       if (!Number.isFinite(n) || n < 1 || n > 10) errors.push({ field: k, message: "must be a number from 1 to 10" }); else clean[k] = n;
-    } else if (k === "guard.mode") {
+    } else if (k === "routing.failover") {
+      if (input[k] !== "auto" && input[k] !== "off") errors.push({ field: k, message: "must be auto or off" });
+      else clean[k] = input[k];
+    } else if (k === "routing.retries") int(k, 0, 5);
+    else if (k === "guard.mode") {
       if (input[k] !== "off" && input[k] !== "shadow" && input[k] !== "on") errors.push({ field: k, message: "must be off, shadow or on" });
       else clean[k] = input[k];
     } else if (k === "guard.highTokens") int(k, 20_000, 2_000_000);

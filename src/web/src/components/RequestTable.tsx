@@ -3,6 +3,13 @@ import type { TableColumnsType } from 'antd';
 import { fmtCompact, fmtDateTime, fmtExact, fmtMs, fmtPct, fmtTps, fmtUsd } from '../format';
 import type { HistoryRow, RunningRow } from '../types';
 
+/** One sentence: why the model you picked did not answer. */
+export function routeExplanation(r: { askedAlias?: string | null; alias: string; trace?: HistoryRow['trace'] }): string {
+  const bad = (r.trace ?? []).filter((t) => t.outcome === 'failed' || t.outcome === 'skipped');
+  if (!bad.length) return `You asked for ${r.askedAlias}; ${r.alias} answered.`;
+  return `You asked for ${r.askedAlias}, but ${r.alias} answered. ${bad.map((t) => `${t.route}${t.key ? ` (${t.key})` : ''}: ${t.detail ?? t.outcome}`).join(' | ')}`;
+}
+
 export type Row = (HistoryRow & { running?: false }) | (RunningRow & { running: true; ctx?: undefined });
 
 /** One row = one request, from the moment it starts (blue) until it finishes (green/red). */
@@ -31,6 +38,11 @@ export function requestColumns(warnTokens: number, onOpen?: (r: HistoryRow) => v
         <div style={{ lineHeight: 1.3 }}>
           <Typography.Text strong>{r.alias}</Typography.Text>
           {r.failover && <Tag color="warning" style={{ marginLeft: 6 }}>failover</Tag>}
+          {r.askedAlias && r.askedAlias !== r.alias && (
+            <Tooltip title={routeExplanation(r)}>
+              <Tag color="error" style={{ marginLeft: 6 }}>asked {r.askedAlias}</Tag>
+            </Tooltip>
+          )}
           <div><Typography.Text type="secondary" style={{ fontSize: 12 }}>{r.provider} · {r.model}</Typography.Text></div>
         </div>
       ),

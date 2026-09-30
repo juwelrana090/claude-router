@@ -153,7 +153,7 @@ export default function HeaderWidget() {
     const ev = focused.event;
     const elapsed = ev.elapsedMs + Math.max(0, now - focused.recvAt);
     const eta = ev.etaMs;
-    const parts = [`Running - ${ev.alias} - ${fmtClock(elapsed)}`];
+    const parts = [`Running - ${ev.askedAlias && ev.askedAlias !== ev.alias ? `${ev.alias} (asked ${ev.askedAlias})` : ev.alias} - ${fmtClock(elapsed)}`];
     if (eta != null) {
       parts.push(`~${fmtClock(eta)} left`);
       pct = Math.min(100, Math.max(2, (elapsed / (elapsed + eta)) * 100));

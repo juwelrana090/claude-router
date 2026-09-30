@@ -8,8 +8,8 @@ import type { InFlight, RecentEntry } from "./live";
 const insert = db.prepare(`INSERT OR REPLACE INTO requests
   (id, session_id, alias, provider, model, key_name, status, stream, failover, started_at, first_token_at,
    ended_at, duration_ms, ttft_ms, in_tokens, out_tokens, cache_read, cache_write, ctx_tokens, cost, tps,
-   guard_saved, guard_would)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+   guard_saved, guard_would, asked_alias, requested_model, resolved_via, trace)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
 /** Called for every finished request, including failures and aborts. Never throws. */
 export function recordFinished(id: string, e: RecentEntry, f?: InFlight): void {
@@ -21,6 +21,8 @@ export function recordFinished(id: string, e: RecentEntry, f?: InFlight): void {
       e.startedAt ?? e.ts - dur, e.firstTokenAt ?? null, e.ts, dur, e.ttftMs ?? null,
       e.in, e.out, e.cacheRead, e.cacheWrite, e.in + e.cacheRead + e.cacheWrite, e.cost, e.outputTokensPerSec ?? null,
       f?.guardSaved ?? 0, f?.guardWould ?? 0,
+    f?.askedAlias ?? null, f?.requestedModel ?? null, f?.resolvedVia ?? null,
+    f?.trace?.length ? JSON.stringify(f.trace) : null,
     );
   } catch (err) {
     console.warn("[HISTORY] write failed:", (err as Error).message);
@@ -33,6 +35,9 @@ export interface HistoryRow {
   endedAt: number; durationMs: number | null; ttftMs: number | null; in: number; out: number;
   cacheRead: number; cacheWrite: number; ctx: number; cost: number; tps: number | null;
   guardSaved: number; guardWould: number;
+  /** Alias the client's model name resolved to (what you asked for). `alias` is what answered. */
+  askedAlias: string | null; requestedModel: string | null; resolvedVia: string | null;
+  trace: { route: string; key?: string; outcome: string; status?: number; detail?: string }[];
 }
 
 type Row = Record<string, string | number | null>;
@@ -45,6 +50,9 @@ const toRow = (r: Row): HistoryRow => ({
   in: r.in_tokens as number, out: r.out_tokens as number, cacheRead: r.cache_read as number,
   cacheWrite: r.cache_write as number, ctx: r.ctx_tokens as number, cost: r.cost as number, tps: r.tps as number | null,
   guardSaved: r.guard_saved as number, guardWould: r.guard_would as number,
+  askedAlias: (r.asked_alias as string | null) ?? null, requestedModel: (r.requested_model as string | null) ?? null,
+  resolvedVia: (r.resolved_via as string | null) ?? null,
+  trace: (() => { try { return r.trace ? JSON.parse(r.trace as string) : []; } catch { return []; } })(),
 });
 
 export interface HistoryQuery {
@@ -163,6 +171,7 @@ export function backfillFromJsonl(): number {
           j.startedAt ? Date.parse(j.startedAt) : ended - dur, j.firstTokenAt ? Date.parse(j.firstTokenAt) : null,
           ended, dur, j.ttftMs ?? null, j.in ?? 0, j.out ?? 0, j.cacheRead ?? 0, j.cacheWrite ?? 0,
           (j.in ?? 0) + (j.cacheRead ?? 0) + (j.cacheWrite ?? 0), j.cost ?? 0, j.outputTokensPerSec ?? null, 0, 0,
+          null, null, null, null,
         );
         n++;
       } catch { /* skip malformed line */ }

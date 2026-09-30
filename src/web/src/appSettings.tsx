@@ -11,6 +11,8 @@ export interface AppSettings {
   'guard.lowTokens': number;
   'guard.keepRecent': number;
   'guard.minChars': number;
+  'routing.failover': 'auto' | 'off';
+  'routing.retries': number;
 }
 
 const DEFAULTS: AppSettings = {
@@ -23,6 +25,8 @@ const DEFAULTS: AppSettings = {
   'guard.lowTokens': 45_000,
   'guard.keepRecent': 6,
   'guard.minChars': 1200,
+  'routing.failover': 'auto',
+  'routing.retries': 2,
 };
 
 interface Ctx {

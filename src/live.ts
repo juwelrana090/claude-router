@@ -1,5 +1,14 @@
 import type { ServerResponse } from "node:http";
 
+/** One step of a request's journey through the route chain (shown in History). */
+export interface TraceStep {
+  route: string;
+  key?: string;
+  outcome: "served" | "skipped" | "failed" | "retry";
+  status?: number;
+  detail?: string;
+}
+
 export interface InFlight {
   id: string;
   alias: string;
@@ -23,6 +32,11 @@ export interface InFlight {
   // context guard numbers for the history row
   guardSaved?: number;
   guardWould?: number;
+  // routing visibility: what the client asked for and how the router got to the route that answered
+  askedAlias?: string;
+  requestedModel?: string;
+  resolvedVia?: string;
+  trace?: TraceStep[];
 }
 
 export interface RecentEntry {
@@ -50,16 +64,30 @@ export interface RecentEntry {
 
 // ---------- cooldowns (key env name -> epoch ms when it frees up) ----------
 export const cooldown = new Map<string, number>();
+/** Why a key is resting (shown in the Keys dialog and in request traces). */
+export const coolInfo = new Map<string, { status: number; reason: string; at: number }>();
+const failStreak = new Map<string, number>();
 
-export function cool(key: string, ms: number): void {
+export function cool(key: string, ms: number, info?: { status: number; reason: string }): void {
   cooldown.set(key, Date.now() + ms);
+  if (info) coolInfo.set(key, { ...info, at: Date.now() });
+  failStreak.set(key, (failStreak.get(key) ?? 0) + 1);
 }
+
+export const streakOf = (key: string): number => failStreak.get(key) ?? 0;
+export function noteSuccess(key: string): void {
+  failStreak.delete(key);
+  coolInfo.delete(key);
+}
+export const coolInfoFor = (key: string) => (cooldownLeft(key) > 0 ? coolInfo.get(key) : undefined);
 
 export function cooldownLeft(key: string): number {
   return Math.max(0, (cooldown.get(key) ?? 0) - Date.now());
 }
 
 export function resetCooldown(key: string): boolean {
+  failStreak.delete(key);
+  coolInfo.delete(key);
   return cooldown.delete(key);
 }
 

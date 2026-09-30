@@ -83,6 +83,11 @@ const MIGRATIONS: string[] = [
    CREATE INDEX idx_guard_created ON guard_cleared(created_at);
    ALTER TABLE requests ADD COLUMN guard_saved INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE requests ADD COLUMN guard_would INTEGER NOT NULL DEFAULT 0;`,
+  // 3: routing visibility (what was asked, how it resolved, every route tried)
+  `ALTER TABLE requests ADD COLUMN asked_alias TEXT;
+   ALTER TABLE requests ADD COLUMN requested_model TEXT;
+   ALTER TABLE requests ADD COLUMN resolved_via TEXT;
+   ALTER TABLE requests ADD COLUMN trace TEXT;`,
 ];
 
 function migrate(): void {
@@ -115,6 +120,8 @@ export const SETTING_DEFAULTS = {
   "guard.lowTokens": 45_000,
   "guard.keepRecent": 6,
   "guard.minChars": 1200,
+  "routing.failover": "auto",
+  "routing.retries": 2,
 } as const;
 export type SettingKey = keyof typeof SETTING_DEFAULTS;
 

@@ -17,6 +17,8 @@ export interface EtaEvent {
   requestId: string;
   sessionId: string;
   alias: string;
+  /** What the client asked for, when a different model answered (failover). */
+  askedAlias?: string | null;
   provider: string;
   model: string;
   status: EtaStatus;
@@ -235,6 +237,11 @@ export interface HistoryRow {
   guardSaved: number;
   /** Tokens it would have removed (mode shadow). */
   guardWould: number;
+  /** Alias the client's model name resolved to. `alias` is the route that actually answered. */
+  askedAlias: string | null;
+  requestedModel: string | null;
+  resolvedVia: 'exact' | 'alias' | 'default' | null;
+  trace: { route: string; key?: string; outcome: 'served' | 'skipped' | 'failed' | 'retry'; status?: number; detail?: string }[];
 }
 
 export interface RunningRow {
@@ -249,6 +256,7 @@ export interface RunningRow {
   failover: boolean;
   outSoFar: number;
   tokensPerSec: number | null;
+  askedAlias?: string | null;
 }
 
 export interface HistoryResponse {
