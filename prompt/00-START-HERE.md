@@ -14,6 +14,10 @@
 | 6 | `06-claude-code-settings.md` | Claude Code-এর settings, যাতে conversation ছোট থাকে |
 | 7 | `07-routing-visibility.md` | **"glm বাছলাম, ds-flash চলল" সমস্যা:** কে উত্তর দিল, কেন সেটা দেখানো; ব্যর্থতা সামলানোর নিয়ম ঠিক করা; auto-switch চালু/বন্ধ করার সুইচ |
 | 8 | `08-bangla-guide.md` | প্রজেক্টের ভেতরে থাকা বাংলা গাইড (`GUIDE-BN.md`): সব পেজ, বাটন, env, উদাহরণ |
+| 9 | `09-backend-capacity.md` | **নতুন:** History-র সঠিক পেজিং (API), model-এর ফর্ম থেকে API key বসানো, provider-এর দৈনিক সীমা (আগেই অন্য provider-এ যাওয়া), ছোট context window-এর fallback সামলানো |
+| 10 | `10-web-history-keys-limits-settings.md` | **নতুন:** History-র পেজ নম্বর, model ফর্মে "Paste a new API key", Providers-এ Today কলাম ও সীমা, Settings → Claude Code-এ সুন্দর JSON জেনারেটর, বাংলা গাইডের হালনাগাদ |
+| 11 | `11-backend-memory.md` | **নতুন:** router-এর নিজের স্মৃতি (পুরনো কথোপকথনের সারাংশ পেছনে লেখা, SQLite-এ জমা, পরের request থেকে পুরনো মেসেজের বদলে যায়), prompt-এর ভাগ মাপা, পুরনো tool call ও বড় paste ছোট করা |
+| 12 | `12-web-memory-anatomy.md` | **নতুন:** Settings → Memory ট্যাব, Usage/History-তে "prompt কোথায় যাচ্ছে", Context guard-এর নতুন সুইচ, বাংলা গাইডের হালনাগাদ |
 
 প্রতিটা ফাইল শেষ হলে local AI-কে বলবে verify কমান্ডের **আসল output** দেখাতে। সব শেষে router একবার restart করবে (PM2 বা `npm run serve`) এবং browser hard-refresh দেবে।
 
@@ -60,3 +64,31 @@
 
 **যা আমি জানি না:** Z.ai *কেন* ব্যর্থ হচ্ছে (balance? plan? limit? model id?), আর VS Code আসলে কোন নাম পাঠাচ্ছে। দুটোই এখান থেকে দেখা যায় না। 07 বসালে দুটোই স্ক্রিনে দেখা যাবে।
 **দুটো পরীক্ষা:** (১) Models → `glm` → ⚡, Z.ai-র আসল উত্তর পড়ো। (২) History → নতুন সারি → Details → **Client asked for** দেখো: সেখানে `ds-flash` থাকলে VS Code-ই সেই নাম পাঠিয়েছে (Anthropic-এর নিজের GitHub রিপোর্টে আছে: VS Code সেটিংসের `claudeCode.environmentVariables`-এ `ANTHROPIC_MODEL` থাকলে extension-এর `/model` কাজ করে না, Terminal-এ করে)।
+
+
+## সর্বশেষ যাচাই (09 ও 10)
+
+- **আগের ০১–০৮ ঠিকঠাক বসেছে কি না:** তোমার শেষ zip আমার টেস্ট করা কপির সাথে মিলিয়েছি। সব ফাইল হুবহু মিলেছে, শুধু ৪টা ফাইলে স্রেফ ফাঁকা জায়গার পার্থক্য (শেষের নতুন লাইন, একটা ফাঁকা লাইন, দুই লাইনের indentation)। কোড বা আচরণে পার্থক্য নেই। তোমার কপিতে চারটা টেস্ট suite পাস করেছে।
+- **09 ও 10:** তোমার আসল zip-এর ওপর শুধু প্রম্পট থেকে বসিয়েছি: ১৪টা অংশ সব বসেছে, ০টা ব্যর্থ; ৪৮টা ফাইল টেস্ট-কপির সাথে মিলেছে। সেই কপি build হয়েছে, web typecheck পরিষ্কার, পাঁচটা suite (`smoke`, `admin-smoke`, `guard-smoke`, `routing-smoke`, `capacity-smoke`) পাস করেছে।
+- আসল browser (headless Chromium)-এ: ১২০ request-এর History-তে পেজ ২-এর সারি পেজ ১-এর সাথে মেলে না (overlap ০), ১২ সেকেন্ড পরেও পেজ ২ স্থির, refresh দিলে একই পেজ, `?page=99` শেষ পেজে ফেরে; model ফর্মে key বসিয়ে save করলে `ZAI_KEY_2` তৈরি হয়ে model-এ আটকে যায়; Settings → Claude Code-এ সাজানো JSON-এ আসল `statusline.mjs`-এর পথ।
+- **যা যাচাই করিনি:** আসল provider (Z.ai, OpenRouter...) কেমন সাড়া দেয়; আসল Claude Code/VS Code কোন নাম পাঠায়। টেস্টগুলো নকল upstream দিয়ে।
+
+## তোমার জন্য মনে রাখার কথা
+
+- **"১০০% token optimize" কেউ দিতে পারে না।** যা সত্যিই করা যায়: পুরনো tool output ছাঁটা (context guard), আগে compact করা, ভুল/বড় request ব্যর্থ হওয়ার আগেই এড়ানো (09-এর window ও daily limit), আর সবকিছু মেপে দেখানো (Live, Usage, History)। Context guard এখনো **Measure only**; Settings → Context guard-এ সংখ্যা দেখে নিজে **On** করবে।
+- **Auto-switch (Switch automatically)** এখন তিনভাবে কাজ করে: provider ব্যর্থ হলে, daily limit পৌঁছালে (আগেই), আর prompt ছোট-window model-এ না ধরলে। প্রতিটা সুইচ History-তে লাল "asked ..." ট্যাগসহ কারণ লেখা থাকে।
+- তোমার ফোল্ডারে `pnpm-lock.yaml` আছে (প্রজেক্ট শুধু npm-এর জন্য, `.gitignore`-এও তাই লেখা)। মুছে ফেলো, নইলে pnpm আর npm মিশে আগের মতো TypeScript ভেঙে যেতে পারে।
+
+
+## 11 ও 12: তোমার তিনটা দাবির উত্তর
+
+1. **"প্রতি request-এ পুরো কথোপকথন যায়, AI যেন মনে রাখে":** এখন router-ই মনে রাখে (Router Memory)। পুরনো অংশের সারাংশ সে নিজে জমায় ও পাঠায়, পুরনো মেসেজ নয়। Claude Code-কে কিছু বদলাতে হয় না। সীমা: model-কে *কিছু* context দিতেই হয় (এটা সব AI-র নিয়ম); আমরা শুধু সেটাকে আসল মেসেজের বদলে সংক্ষিপ্ত সারাংশ করি। এক কথোপকথনের ভেতরে কাজ করে; `/clear`-এর পর নতুন কথোপকথন খালি শুরু হয়।
+2. **"User prompt size কমাও":** (ক) আগে মাপা: Usage → "Where your prompt tokens go" দেখায় কোন অংশ বড়। (খ) পুরনো tool call-এর ভেতরের বড় লেখা ছোট হয় (ডিফল্ট চালু)। (গ) পুরনো মেসেজের বিশাল paste ছোট করা যায় (ডিফল্ট **বন্ধ**, কারণ তোমার নিজের লেখা বদলায়; প্রথম মেসেজ ও নতুন দুটো কখনো ছোঁয়া হয় না)। (ঘ) Memory সারাংশ।
+3. **"Token optimisation + automatic switching":** Memory-র সারাংশ হয় **provider-নিরপেক্ষ**: fallback model-ও একই ছোট prompt পায়। তার ওপর 09-এর context-window মাপ প্রতিটা route-এ ফিট করে।
+
+## 11 ও 12 যাচাই
+
+- তোমার আসল zip-এর ওপর 09, 10, 11, 12 **শুধু প্রম্পট থেকে** বসিয়েছি: ৩১টা অংশ সব বসেছে, ব্যর্থ ০; ৫২টা ফাইল টেস্ট-কপির সাথে হুবহু মিলেছে। সেই কপি build হয়েছে, web typecheck পরিষ্কার, ছয়টা suite পাস (`memory-smoke`-এ ৪২টা check)।
+- আসল browser-এ: লম্বা কথোপকথন তিনবার পাঠিয়ে Settings → Memory-তে "104K token বাঁচল, ১টা সারাংশ" ও সারাংশের সারি (View/Forget) দেখেছি; History → Details-এ prompt-এর ভাগ (tool results ৯৫%) ও memory লাইন; কোনো page error নেই।
+- **যাচাই করিনি:** আসল model-এর সারাংশ কতটা ভালো হবে (টেস্টে নকল model); আসল Claude Code কাজে কতটা বাঁচবে। তাই **Memory এখন Measure only**। Settings → Memory → model বাছো, কয়েকদিন পর সংখ্যা দেখো, তারপর On।
+- সস্তা model হিসেবে `ds-flash`-এর মতো দ্রুত ও সস্তাটা বাছো; মূল model দিয়ে সারাংশ করালে খরচ বাড়বে।
