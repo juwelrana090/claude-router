@@ -4,7 +4,7 @@ import readline from "node:readline";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
-  BACKUP_DIR, Config, ENV_FILE, ModelCfg, PORT, ProviderCfg, ROUTES_FILE,
+  BACKUP_DIR, Config, ENV_FILE, EXTRA_ORIGINS, ModelCfg, PORT, ProviderCfg, ROUTES_FILE,
   StaleVersionError, ValidationError, commitConfig, commitEnv, configVersion, envVersion,
   getCfg, readEnvText, validateEnvName, validateModelAlias, validateModelBody, validateNoCycle,
   validateProviderBody, validateProviderName,
@@ -67,11 +67,13 @@ async function readJSONBody(req: IncomingMessage): Promise<Record<string, unknow
 }
 
 // ---------- guards ----------
-// DNS-rebinding defence: the UI is loopback-only, so the Host header must be too.
+// DNS-rebinding defence: the UI is loopback-only, so the Host header must be too —
+// except the hosts in ROUTER_EXTRA_ORIGINS (reached through a reverse proxy on your own domain).
 export function hostAllowed(req: IncomingMessage): boolean {
   const host = header(req.headers.host);
   if (!host) return false;
   const allowed = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+  for (const x of EXTRA_ORIGINS) allowed.add(x.host);
   return allowed.has(host);
 }
 
@@ -80,11 +82,13 @@ function header(v: string | string[] | undefined): string | undefined {
 }
 
 // Cross-origin state changes are refused. Same-origin requests from the UI carry
-// an Origin header; a missing Origin (curl, Claude Code) is allowed.
+// an Origin header; a missing Origin (curl, Claude Code) is allowed. Origins in
+// ROUTER_EXTRA_ORIGINS (own domain behind a proxy) are trusted as well.
 export function originAllowed(req: IncomingMessage): boolean {
   const origin = header(req.headers.origin);
   if (!origin || origin === "null") return true;
   const allowed = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
+  for (const x of EXTRA_ORIGINS) allowed.add(x.origin);
   return allowed.has(origin);
 }
 

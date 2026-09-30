@@ -31,6 +31,26 @@ loadEnv();
 export const PORT = Number(process.env.ROUTER_PORT || 21450);
 export const ROUTER_KEY = process.env.ROUTER_KEY || "";
 
+/**
+ * External origins allowed to reach the router through a reverse proxy on your own domain
+ * (comma-separated, e.g. "https://ai.qawiun.com"). Each entry is added to the Host and the
+ * Origin guards in admin.ts; loopback-only is the default when this is unset.
+ */
+export const EXTRA_ORIGINS: { origin: string; host: string }[] = String(process.env.ROUTER_EXTRA_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim().replace(/\/+$/, ""))
+  .filter(Boolean)
+  .map((s) => {
+    try {
+      const u = new URL(s);
+      if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+      return { origin: u.origin, host: u.hostname + (u.port ? `:${u.port}` : "") };
+    } catch {
+      return null;
+    }
+  })
+  .filter((x): x is { origin: string; host: string } => x !== null);
+
 // ---------- config shape ----------
 export type AuthMode = "bearer" | "x-api-key" | "both" | "none";
 
