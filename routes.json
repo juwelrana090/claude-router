@@ -62,12 +62,24 @@
         "oc-haiku",
         "oc-free",
         "ds-flash"
-      ]
+      ],
+      "price": {
+        "in": 0.66,
+        "out": 1.98,
+        "cacheRead": 0.022,
+        "peak": true
+      }
     },
     "ds-flash": {
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
-      "key": "DEEPSEEK_KEY_1"
+      "key": "DEEPSEEK_KEY_1",
+      "price": {
+        "in": 0.15,
+        "out": 0.6,
+        "cacheRead": 0.003,
+        "peak": true
+      }
     },
     "glm": {
       "provider": "zai",
