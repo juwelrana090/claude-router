@@ -11,32 +11,31 @@
       "baseURL": "https://api.deepseek.com/anthropic",
       "auth": "both",
       "keys": [
-        "DEEPSEEK_KEY_1",
-        "DEEPSEEK_KEY_2"
+        "DEEPSEEK_KEY_1"
       ]
     },
     "zai": {
       "baseURL": "https://api.z.ai/api/anthropic",
       "auth": "both",
       "keys": [
-        "ZAI_KEY_1",
-        "ZAI_KEY_2"
+        "ZAI_KEY_1"
       ]
     },
     "openrouter": {
       "baseURL": "https://openrouter.ai/api",
       "auth": "bearer",
       "keys": [
-        "OPENROUTER_KEY_1",
-        "OPENROUTER_KEY_2",
-        "OPENROUTER_KEY_3"
+        "OPENROUTER_KEY_1"
       ]
     },
     "opencode": {
       "baseURL": "https://opencode.ai/zen",
       "auth": "both",
       "keys": [
-        "OPENCODE_ZEN_KEY_1"
+        "OPENCODE_ZEN_KEY_1",
+        "OPENCODE_ZEN_KEY_2",
+        "OPENCODE_ZEN_KEY_3",
+        "OPENCODE_ZEN_KEY_4"
       ]
     },
     "ollama": {
@@ -50,6 +49,13 @@
         "ollama"
       ],
       "disabled": false
+    },
+    "commandcode": {
+      "baseURL": "https://api.commandcode.ai/provider",
+      "auth": "bearer",
+      "keys": [
+        "COMMANDCODE_KEY_1"
+      ]
     }
   },
   "models": {
@@ -122,6 +128,14 @@
       "provider": "ollama",
       "model": "deepseek-v4.1-flash",
       "key": "OLLAMA_KEY_1"
+    },
+    "cc-sonnet": {
+      "provider": "commandcode",
+      "model": "space-bunny-alpha-free",
+      "key": "COMMANDCODE_KEY_1",
+      "fallback": [
+        "ds-flash"
+      ]
     }
   }
 }
