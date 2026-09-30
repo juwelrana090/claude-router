@@ -213,17 +213,28 @@ export function applyGuard(body: Json, sessionId: string, cfg: GuardConfig = rea
       }
     });
 
-    // 2) only when the prompt is over the high-water mark, clear MORE (oldest first) down to the low-water mark.
+// 2) only when the prompt is over the high-water mark, clear MORE (oldest first) down to the low-water mark.
+    // A rewrite breaks the provider's prompt cache from the first changed message onward, so it must be worth it:
+    // if everything that could still be cleared adds up to less than half of the high-to-low gap (the prompt is
+    // mostly text that cannot be cleared), leave the prompt alone. Without this rule the guard degenerates into
+    // clearing one old result per request, which re-bills the tail of the prompt on every single request.
     let clearedNow = 0;
     if (est > cfg.highTokens) {
-      for (let i = 0; i < protectedFrom && est > cfg.lowTokens; i++) {
+      let available = 0;
+      for (let i = 0; i < protectedFrom; i++) {
         const s = slots[i];
-        if (apply.has(i) || s.hasImage || s.chars < cfg.minChars) continue;
-        apply.add(i);
-        est -= gain(s);
-        clearedNow++;
-        if (cfg.mode === "on") insertId.run(sessionId, s.id, s.chars, Date.now());
-        else cleared.add(s.id);
+        if (!apply.has(i) && !s.hasImage && s.chars >= cfg.minChars) available += gain(s);
+      }
+      if (available >= Math.round((cfg.highTokens - cfg.lowTokens) / 2)) {
+        for (let i = 0; i < protectedFrom && est > cfg.lowTokens; i++) {
+          const s = slots[i];
+          if (apply.has(i) || s.hasImage || s.chars < cfg.minChars) continue;
+          apply.add(i);
+          est -= gain(s);
+          clearedNow++;
+          if (cfg.mode === "on") insertId.run(sessionId, s.id, s.chars, Date.now());
+          else cleared.add(s.id);
+        }
       }
     }
     // 3) the tool CALL of every cleared result: shrink the big strings inside its input as well.

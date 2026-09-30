@@ -1,5 +1,6 @@
 import type { ModelCfg, ProviderCfg } from "./config";
 import { applyGuard, estimateTokens, readConfig } from "./contextGuard";
+import { getSetting } from "./db";
 import { providerToday } from "./history";
 
 const fmt = (n: number): string =>
@@ -19,6 +20,24 @@ export function budgetReason(name: string, p: ProviderCfg): string | null {
     return `daily token budget reached (${fmt(t.tokens)} of ${fmt(p.dailyTokens)} today)`;
   }
   return null;
+}
+
+/**
+ * Shrinking the prompt saves TOKENS, but every rewrite re-bills the prompt at the full input price. On a provider
+ * whose cached input costs a fraction of normal input (DeepSeek and similar) that costs more money than it saves;
+ * on a provider without a cache, or with a daily/per-minute quota, tokens are exactly what you pay with.
+ * "auto" therefore shrinks only when it pays off: quota-limited providers, small context windows, models with no
+ * price set (assumed free/quota-bound) and models whose cached input is not much cheaper than normal input.
+ */
+export function shrinkWorthy(m: ModelCfg | undefined, p: ProviderCfg | undefined): boolean {
+  if ((getSetting("optimise.scope") as string) === "always") return true;
+  if (!m || !p) return true;
+  if (p.dailyTokens || p.dailyRequests) return true;
+  if (m.contextWindow && m.contextWindow <= 200_000) return true;
+  const price = m.price;
+  if (!price) return true;
+  const cached = price.cacheRead ?? price.in;
+  return cached > price.in * 0.5;
 }
 
 export interface Fit {

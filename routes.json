@@ -40,9 +40,11 @@
       ]
     },
     "ollama": {
-      "baseURL": "https://ollama.com/api/chat",
+      "baseURL": "https://ollama.com",
       "auth": "both",
-      "keys": [],
+      "keys": [
+        "OLLAMA_KEY_1"
+      ],
       "dropBeta": false,
       "dropBodyFields": [
         "ollama"
@@ -118,7 +120,8 @@
     },
     "deepseek-v4.1-flash": {
       "provider": "ollama",
-      "model": "deepseek-v4.1-flash"
+      "model": "deepseek-v4.1-flash",
+      "key": "OLLAMA_KEY_1"
     }
   }
 }

@@ -142,6 +142,7 @@ export const SETTING_DEFAULTS = {
   "guard.minChars": 1200,
   "routing.failover": "auto",
   "routing.retries": 2,
+  "optimise.scope": "auto",
   "guard.trimInputs": true,
   "guard.trimPastes": false,
   "guard.pasteChars": 12_000,

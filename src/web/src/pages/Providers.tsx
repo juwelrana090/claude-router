@@ -95,6 +95,7 @@ import { fmtCompact } from '../format';
 // ---------- Accurate admin view types (server shapes) ----------
 
 export type AuthMode = 'bearer' | 'x-api-key' | 'both' | 'none';
+export type Protocol = 'anthropic' | 'openai';
 
 export interface AdminKeyView {
   envName: string;
@@ -115,6 +116,8 @@ export interface AdminProviderView {
   dropBodyFields: string[];
   disabled: boolean;
   keyless?: boolean;
+  /** anthropic = the provider speaks Claude's format. openai = chat-completions format, converted by the router. */
+  protocol?: Protocol;
   keys: AdminKeyView[];
   keysTotal: number;
   keysHealthy: number;
@@ -377,6 +380,8 @@ export interface TestResult {
   model: string;
   key: AdminKeyView;
   detail: string;
+  /** Plain-language next step when the test failed. */
+  hint?: string | null;
 }
 
 export function useTestModel() {
@@ -408,6 +413,7 @@ export function useTestModel() {
                       {r.detail || '(no detail)'}
                     </Typography.Text>
                   </Typography.Paragraph>
+                  {!r.ok && r.hint && <Alert type="warning" showIcon message={r.hint} style={{ marginTop: 8 }} />}
                 </Space>
               ),
             });
@@ -449,6 +455,7 @@ interface ProviderFormValues {
   dropBeta: boolean;
   dropBodyFields?: string[];
   disabled: boolean;
+  protocol?: Protocol;
   dailyRequests?: number | null;
   dailyTokens?: number | null;
   keys?: { envName?: string; value?: string }[];
@@ -482,10 +489,11 @@ function ProviderFormModal({
             dropBeta: provider.dropBeta,
             dropBodyFields: provider.dropBodyFields,
             disabled: provider.disabled,
+            protocol: provider.protocol ?? 'anthropic',
             dailyRequests: provider.dailyRequests ?? null,
             dailyTokens: provider.dailyTokens ?? null,
           }
-        : { auth: 'bearer', dropBeta: false, dropBodyFields: [], disabled: false, keys: [{}] },
+        : { auth: 'bearer', protocol: 'anthropic', dropBeta: false, dropBodyFields: [], disabled: false, keys: [{}] },
     );
     // Only on open / different provider: the 20s snapshot poll swaps the `provider` object and
     // would otherwise reset the form under the user's hands.
@@ -506,6 +514,7 @@ function ProviderFormModal({
             dropBeta: values.dropBeta,
             dropBodyFields: values.dropBodyFields ?? [],
             disabled: values.disabled,
+            protocol: values.protocol ?? 'anthropic',
             dailyRequests: values.dailyRequests ?? null,
             dailyTokens: values.dailyTokens ?? null,
           }),
@@ -523,6 +532,7 @@ function ProviderFormModal({
             dropBeta: values.dropBeta,
             dropBodyFields: values.dropBodyFields ?? [],
             disabled: values.disabled,
+            protocol: values.protocol ?? 'anthropic',
             ...(values.dailyRequests ? { dailyRequests: values.dailyRequests } : {}),
             ...(values.dailyTokens ? { dailyTokens: values.dailyTokens } : {}),
             keys:
@@ -561,12 +571,22 @@ function ProviderFormModal({
             <Input placeholder="openrouter" autoComplete="off" />
           </Form.Item>
         )}
-        <Form.Item
-          name="baseURL"
-          label="Base URL"
-          rules={[{ required: true, message: 'required (https, or http for localhost)' }]}
-        >
-          <Input placeholder="https://api.example.com" autoComplete="off" />
+        <Form.Item name="protocol" label="Provider speaks" tooltip="Most coding providers have an address that speaks Claude's own format (Anthropic style). Some free ones (Groq, Gemini, Cerebras, NVIDIA, Mistral) only speak the OpenAI chat format: choose OpenAI style and the router converts everything, including tool calls and streaming.">
+          <Select options={[{ value: 'anthropic', label: 'Anthropic style (Claude format)' }, { value: 'openai', label: 'OpenAI style (chat completions), converted by the router' }]} />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(a, b) => a.protocol !== b.protocol}>
+          {({ getFieldValue }) => (
+            <Form.Item
+              name="baseURL"
+              label="Base URL"
+              extra={getFieldValue('protocol') === 'openai'
+                ? 'Ends where /chat/completions starts, for example https://api.groq.com/openai/v1. The router adds /chat/completions.'
+                : 'Do not add /v1/messages: the router adds it. Ollama cloud is https://ollama.com (no /api); Ollama on your computer is http://localhost:11434.'}
+              rules={[{ required: true, message: 'required (https, or http for localhost)' }]}
+            >
+              <Input placeholder={getFieldValue('protocol') === 'openai' ? 'https://api.example.com/v1' : 'https://api.example.com'} autoComplete="off" />
+            </Form.Item>
+          )}
         </Form.Item>
         <Form.Item name="auth" label="Auth mode" rules={[{ required: true }]}>
           <Select options={AUTH_MODE_OPTIONS} />
@@ -966,9 +986,16 @@ function ProvidersInner() {
     {
       title: 'Auth',
       dataIndex: 'auth',
-      width: 110,
-      render: (v: string) => (
-        <Tag icon={<ApiOutlined />}>{v}</Tag>
+      width: 150,
+      render: (v: string, p) => (
+        <span>
+          <Tag icon={<ApiOutlined />}>{v}</Tag>
+          {p.protocol === 'openai' && (
+            <Tooltip title="This provider speaks the OpenAI chat format. The router converts requests and answers for you.">
+              <Tag color="blue">OpenAI style</Tag>
+            </Tooltip>
+          )}
+        </span>
       ),
     },
     {

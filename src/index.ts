@@ -7,15 +7,16 @@ import { once } from "node:events";
 import { Config, ModelCfg, PORT, ProviderCfg, ROOT, ROUTER_KEY, getCfg } from "./config";
 import { handleAdmin, hostAllowed, originAllowed } from "./admin";
 import { promptAnatomy } from "./anatomy";
-import { applyGuard, pruneGuardMemory } from "./contextGuard";
+import { applyGuard, estimateTokens, pruneGuardMemory } from "./contextGuard";
 import { applyMemory, pruneMemory } from "./memory";
 import { canWrite, handleAuthRoutes, headerKeyOk, principal, seedAdminFromEnv, userCount } from "./auth";
 import * as history from "./history";
 import * as eta from "./eta";
 import * as live from "./live";
 import { costOf } from "./pricing";
-import { budgetReason, fitToWindow } from "./capacity";
+import { budgetReason, fitToWindow, shrinkWorthy } from "./capacity";
 import { classifyFailure } from "./failure";
+import { adaptOpenAI, openaiHeaders, toOpenAIRequest } from "./openai";
 import { getSetting } from "./db";
 import { buildBody, buildHeaders, keyOrder, resolveModel } from "./routing";
 
@@ -280,9 +281,12 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       .join(" | ");
 
   // Context guard: clear OLD tool outputs (remembered per session) before the prompt goes upstream.
-  const guard = applyGuard(body, sessionId);
+  // Shrinking only pays off where tokens are what you spend (see shrinkWorthy); on a cache-priced model it is skipped.
+  const shrink = shrinkWorthy(c.models[alias], c.providers[c.models[alias].provider]);
+  const skipped = { mode: "off" as const, beforeTokens: 0, afterTokens: 0, saved: 0, would: 0, clearedNow: 0, clearedTotal: 0 };
+  const guard = shrink ? applyGuard(body, sessionId) : { body, result: skipped };
   // Router memory: replace the old part of a long conversation by the stored summary (written in the background).
-  const memory = applyMemory(body, guard.body, sessionId);
+  const memory = shrink ? applyMemory(body, guard.body, sessionId) : { body: guard.body, result: { mode: "off" as const, saved: 0, would: 0, covers: 0, pending: false } };
   const upstreamBody = memory.body as Record<string, unknown>;
   const anatomy = promptAnatomy(body);
   if (guard.result.saved > 0 || guard.result.clearedNow > 0) {
@@ -343,6 +347,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       addTrace({ route: routeName, outcome: "skipped", detail: p ? `provider ${m.provider} is disabled` : `provider ${m.provider} does not exist` });
       continue;
     }
+    const isOpenAI = p.protocol === "openai";
     const spent = budgetReason(m.provider, p);
     if (spent) {
       addTrace({ route: routeName, outcome: "skipped", detail: `${m.provider}: ${spent}` });
@@ -380,10 +385,10 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       for (let attempt = 0; ; attempt++) {
         let up: Response;
         try {
-          up = await fetch(`${p.baseURL}/v1/messages`, {
+          up = await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
             method: "POST",
-            headers: buildHeaders(req, p, keyName),
-            body: buildBody(fit.body, m, p),
+            headers: isOpenAI ? openaiHeaders(p, keyName) : buildHeaders(req, p, keyName),
+            body: isOpenAI ? toOpenAIRequest(fit.body, m, p) : buildBody(fit.body, m, p),
             signal: ac.signal,
           });
         } catch (e) {
@@ -426,7 +431,9 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         addTrace({ route: routeName, key: keyName, outcome: "served", status: up.status, detail: fit.note });
         if (fit.saved > 0 && track) track.guardSaved = (track.guardSaved ?? 0) + fit.saved;
         if (routeName !== alias) console.warn(`[ROUTER] asked "${body.model}" (${alias}) but served by ${routeName}: ${summary()}`);
-        return relay(up, res, body, routeName, m, keyName, started, track);
+        // An OpenAI-style provider answers in its own format: convert it, then everything below is unchanged.
+        const answer = isOpenAI ? await adaptOpenAI(up, body.stream === true, m.model, estimateTokens(fit.body)) : up;
+        return relay(answer, res, body, routeName, m, keyName, started, track);
       }
     }
   }

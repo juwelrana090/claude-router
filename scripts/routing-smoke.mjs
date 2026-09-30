@@ -159,7 +159,7 @@ const all = JSON.stringify(dead.trace) + (r.headers.get("x-router-failover") ?? 
 t("upstream text containing a key-like token is redacted", /\[redacted\]/.test(all) && !/sk-abcdefghijklmnop1234/.test(all), all.slice(0, 140));
 child2.kill();
 
-fs.rmSync(home, { recursive: true, force: true });
+try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Windows may still hold the DB file */ }
 mock.close();
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

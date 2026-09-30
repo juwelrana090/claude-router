@@ -256,7 +256,7 @@ await post(pasted); await sleep(150);
 t("... deterministic: the same conversation gives the same text every time", JSON.stringify(last.messages.map((m) => m.content[0].text)) === JSON.stringify(again));
 
 child.kill();
-fs.rmSync(home, { recursive: true, force: true });
+try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Windows may still hold the DB file */ }
 mock.close();
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

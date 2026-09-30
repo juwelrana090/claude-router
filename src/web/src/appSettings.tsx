@@ -13,6 +13,7 @@ export interface AppSettings {
   'guard.minChars': number;
   'routing.failover': 'auto' | 'off';
   'routing.retries': number;
+  'optimise.scope': 'auto' | 'always';
   'guard.trimInputs': boolean;
   'guard.trimPastes': boolean;
   'guard.pasteChars': number;
@@ -34,6 +35,7 @@ const DEFAULTS: AppSettings = {
   'guard.minChars': 1200,
   'routing.failover': 'auto',
   'routing.retries': 2,
+  'optimise.scope': 'auto',
   'guard.trimInputs': true,
   'guard.trimPastes': false,
   'guard.pasteChars': 12_000,

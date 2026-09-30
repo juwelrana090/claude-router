@@ -254,11 +254,25 @@ function Guard() {
     <>
       <Section
         title="Why this exists"
-        description={<>The model has no memory between requests, so Claude Code sends the whole conversation every time. That cannot be avoided, but most of that conversation is <b>old tool output</b> (files it read, search results, command logs) that the model no longer needs in full. The guard replaces old tool outputs with a one-line note and keeps the newest few. It <b>remembers</b> what it cleared in each session, so later requests get exactly the same notes and the provider's cache keeps working. Clearing happens in rare batches: when the prompt passes the upper limit it is cleared down to the lower limit.</>}
+description={<>The model has no memory between requests, so Claude Code sends the whole conversation every time. That cannot be avoided, but most of that conversation is <b>old tool output</b> (files it read, search results, command logs) that the model no longer needs in full. The guard replaces old tool outputs with a one-line note and keeps the newest few. It <b>remembers</b> what it cleared in each session, so between clearings every request carries exactly the same text. Clearing happens in batches: when the prompt passes the upper limit it is cleared down to the lower limit, and only if that removes a meaningful amount.</>}
       >
         <Typography.Text type="secondary">
-          Research on coding agents (JetBrains, 2025) found this simple approach roughly halves cost while solving as many tasks as summarising with a second model. The risk: the agent may re-read a file it needs again. Start in <b>Measure only</b>, look at the number below, then switch on.
+          <b>What it saves:</b> tokens, typically a quarter to a third of them in a long tool-heavy session (measured with the benchmark in <code>scripts/token-benchmark.mjs</code>). <b>What it does not always save: money.</b> Every clearing changes the start of the prompt, so the provider re-reads the whole prompt at the full input price once. On a provider whose cached input is far cheaper (DeepSeek and similar) that costs more than it saves, which is why the setting below defaults to <b>Auto</b>. Risk: the agent may re-read a file it needs again. Start in <b>Measure only</b>.
         </Typography.Text>
+      </Section>
+      <Section title="Where to shrink prompts">
+        <Form layout="vertical" disabled={!isAdmin}>
+          <Form.Item
+            label="Shrink prompts for"
+            extra="Auto = only where it pays off: providers with a daily limit, models with a small context window, models with no price set (treated as free or quota-bound) and models without a real cache discount. Models whose cached input is at least half price off are left alone. Set prices in Settings > Pricing so the router can tell."
+          >
+            <Segmented
+              value={settings['optimise.scope']}
+              onChange={(v) => void save({ 'optimise.scope': v })}
+              options={[{ value: 'auto', label: 'Auto (recommended)' }, { value: 'always', label: 'Every provider' }]}
+            />
+          </Form.Item>
+        </Form>
       </Section>
       <Section title="Result (last 24 hours)">
         {!g || (g.saved === 0 && g.would === 0) ? (
@@ -331,10 +345,10 @@ function Memory() {
     <>
       <Section
         title="What this is"
-        description={<>The AI model has no memory, so Claude Code sends the whole conversation every time. <b>Router memory</b> remembers for it: when a conversation gets long, a cheap model writes a short summary of the <b>old</b> messages (in the background, so nothing waits). The router stores that summary and, from the next request on, sends it <b>instead of</b> the old messages. The text is the same on every request, so the provider's cache keeps working. Your original request is kept word for word, and the newest messages are never summarised. If the summary model fails, your request goes out unchanged and the router tries again after 5 minutes.</>}
+        description={<>The AI model has no memory, so Claude Code sends the whole conversation every time. <b>Router memory</b> remembers for it: when a conversation gets long, a cheap model writes a short summary of the <b>old</b> messages (in the background, so nothing waits). The router stores that summary and, from the next request on, sends it <b>instead of</b> the old messages. Between summaries the text is the same on every request. Your original request is kept word for word, and the newest messages are never summarised. If the summary model fails, your request goes out unchanged and the router tries again after 5 minutes.</>}
       >
         <Typography.Text type="secondary">
-          Cost and risk: each summary costs a one-time call to the summary model (shown in History as “router memory summary”), and a summary can lose small details. Start with <b>Measure only</b>, read the number below, then switch on. It only works inside one conversation; after <code>/clear</code> a new conversation starts empty, as it should.
+          Cost and risk: each summary costs a call to the summary model (shown in History as “router memory summary”) and changes the start of the prompt, so the provider re-reads it at the full price. It saves tokens, but on a provider with cheap cached input it can cost more money; it uses the same Auto rule as the context guard (Settings &gt; Context guard &gt; Where to shrink prompts). A summary can also lose small details. Start with <b>Measure only</b>. It only works inside one conversation; after <code>/clear</code> a new conversation starts empty, as it should.
         </Typography.Text>
       </Section>
       <Section title="Result (last 24 hours)">

@@ -13,11 +13,14 @@
     "check": "tsc --noEmit",
     "smoke": "npm run -s build && node scripts/smoke.mjs",
     "smoke:admin": "npm run -s build && node scripts/admin-smoke.mjs",
-    "smoke:all": "npm run -s smoke && npm run -s smoke:admin && npm run -s smoke:guard && npm run -s smoke:routing && npm run -s smoke:capacity && npm run -s smoke:memory",
+    "smoke:all": "npm run -s smoke && npm run -s smoke:admin && npm run -s smoke:guard && npm run -s smoke:routing && npm run -s smoke:capacity && npm run -s smoke:memory && npm run -s smoke:providers && npm run -s smoke:optimise",
     "smoke:guard": "npm run -s build && node scripts/guard-smoke.mjs",
     "smoke:routing": "npm run -s build && node scripts/routing-smoke.mjs",
     "smoke:capacity": "npm run -s build && node scripts/capacity-smoke.mjs",
-    "smoke:memory": "npm run -s build && node scripts/memory-smoke.mjs"
+    "smoke:memory": "npm run -s build && node scripts/memory-smoke.mjs",
+    "smoke:providers": "npm run -s build && node scripts/providers-smoke.mjs",
+    "smoke:optimise": "npm run -s build && node scripts/optimise-smoke.mjs",
+    "bench:tokens": "npm run -s build && node scripts/token-benchmark.mjs"
   },
   "license": "ISC",
   "type": "commonjs",

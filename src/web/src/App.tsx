@@ -3,7 +3,9 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppSettingsProvider } from './appSettings';
 import { useAuth } from './auth';
 import AppShell from './layout/AppShell';
+import CatalogPage from './pages/Catalog';
 import HistoryPage from './pages/History';
+import InstructionsPage from './pages/Instructions';
 import LivePage from './pages/Live';
 import LoginPage from './pages/Login';
 import ModelsPage from './pages/Models';
@@ -27,8 +29,10 @@ export default function App() {
           <Route index element={<Navigate to="/live" replace />} />
           <Route path="live" element={<LivePage />} />
           <Route path="history" element={<HistoryPage />} />
-          <Route path="providers" element={<ProvidersPage />} />
-          <Route path="models" element={<ModelsPage />} />
+            <Route path="providers" element={<ProvidersPage />} />
+            <Route path="catalog" element={<CatalogPage />} />
+            <Route path="instructions" element={<InstructionsPage />} />
+            <Route path="models" element={<ModelsPage />} />
           <Route path="usage" element={<UsagePage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />

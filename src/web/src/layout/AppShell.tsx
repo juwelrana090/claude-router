@@ -1,6 +1,8 @@
 import {
   ApiOutlined,
+  AppstoreAddOutlined,
   BarChartOutlined,
+  BookOutlined,
   DeploymentUnitOutlined,
   DownOutlined,
   HistoryOutlined,
@@ -37,9 +39,11 @@ const NAV: NavItem[] = [
   { path: '/live', label: 'Live', icon: <RadarChartOutlined />, hint: 'Real-time requests and speed' },
   { path: '/history', label: 'History', icon: <HistoryOutlined />, hint: 'Every request, with tokens and timing' },
   { path: '/providers', label: 'Providers', icon: <ApiOutlined />, hint: 'Upstreams, keys and health' },
+  { path: '/catalog', label: 'Catalog', icon: <AppstoreAddOutlined />, hint: 'Free and low-price coding AI, one-click setup' },
   { path: '/models', label: 'Models', icon: <DeploymentUnitOutlined />, hint: 'Aliases, fallbacks and prices' },
   { path: '/usage', label: 'Usage', icon: <BarChartOutlined />, hint: 'Tokens, cost and context size' },
   { path: '/users', label: 'Users', icon: <TeamOutlined />, adminOnly: true, hint: 'Who can sign in' },
+  { path: '/instructions', label: 'Instructions', icon: <BookOutlined />, hint: 'How to use free or paid AI' },
   { path: '/settings', label: 'Settings', icon: <SettingOutlined />, hint: 'System, pricing, data and account' },
 ];
 

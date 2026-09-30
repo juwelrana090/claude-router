@@ -34,8 +34,12 @@ export const ROUTER_KEY = process.env.ROUTER_KEY || "";
 // ---------- config shape ----------
 export type AuthMode = "bearer" | "x-api-key" | "both" | "none";
 
+export type Protocol = "anthropic" | "openai";
+
 export interface ProviderCfg {
   baseURL: string;
+  /** anthropic (default): the provider speaks Claude's Messages API. openai: it speaks chat completions and the router converts. */
+  protocol?: Protocol;
   auth: AuthMode;
   keys: string[]; // env var NAMES, not the secrets
   dropBeta?: boolean;
@@ -302,6 +306,23 @@ export function validateAuthMode(raw: unknown): AuthMode {
   return raw;
 }
 
+/** Catches the classic address mistakes before they turn into a 404. Returns a message or null. */
+export function baseURLProblem(baseURL: string, protocol: Protocol): string | null {
+  let u: URL;
+  try { u = new URL(baseURL); } catch { return null; }
+  const path = u.pathname.replace(/\/+$/, "");
+  if (/\/v1\/messages$/.test(path) || /\/chat\/completions$/.test(path)) {
+    return "remove /v1/messages or /chat/completions from the end: the router adds the final part itself";
+  }
+  if (protocol === "anthropic" && /\/v1$/.test(path)) {
+    return "remove /v1 from the end: for an Anthropic-style provider the router adds /v1/messages itself";
+  }
+  if (u.hostname === "ollama.com" && path === "/api") {
+    return "Ollama cloud's Anthropic-style address is https://ollama.com (without /api); /api only serves Ollama's own format";
+  }
+  return null;
+}
+
 export function validateProviderBody(body: Record<string, unknown>, existing?: ProviderCfg): ProviderCfg {
   const errors: FieldError[] = [];
   let baseURL = existing?.baseURL ?? "";
@@ -326,6 +347,17 @@ export function validateProviderBody(body: Record<string, unknown>, existing?: P
     }
   }
 
+  let protocol: Protocol = existing?.protocol ?? "anthropic";
+  if (body.protocol !== undefined) {
+    if (body.protocol !== "anthropic" && body.protocol !== "openai") {
+      errors.push({ field: "protocol", message: "must be anthropic or openai" });
+    } else protocol = body.protocol;
+  }
+  {
+    const problem = baseURL ? baseURLProblem(baseURL, protocol) : null;
+    if (problem) errors.push({ field: "baseURL", message: problem });
+  }
+
   const dropBeta =
     body.dropBeta === undefined ? !!existing?.dropBeta : body.dropBeta === true || body.dropBeta === "true";
   const disabled =
@@ -346,7 +378,8 @@ export function validateProviderBody(body: Record<string, unknown>, existing?: P
   const dailyTokens = limit("dailyTokens", 10_000, 1_000_000_000_000);
 
   if (errors.length) throw new ValidationError(errors);
-  const out: ProviderCfg = { baseURL, auth, keys: existing?.keys ?? [], dropBeta, dropBodyFields, disabled };
+const out: ProviderCfg = { baseURL, auth, keys: existing?.keys ?? [], dropBeta, dropBodyFields, disabled };
+  if (protocol === "openai") out.protocol = "openai";
   if (dailyRequests !== undefined) out.dailyRequests = dailyRequests;
   if (dailyTokens !== undefined) out.dailyTokens = dailyTokens;
   return out;

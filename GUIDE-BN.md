@@ -152,6 +152,12 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
   - **Route taken:** ধাপে ধাপে কী হয়েছিল। `skipped` (এড়ানো হয়েছে, কারণসহ), `failed`, `retry`, `served`।
 - **পেজ (Pagination):** টেবিলের নিচে ডানে পেজ নম্বর, আর "25 / page" ড্রপডাউন (25, 50, 100, 200)। পেজ আর সাইজ URL-এ থাকে (`/ui/history?page=2&size=50`), তাই refresh দিলে বা লিংক পাঠালে একই সারিগুলো আসে। সবচেয়ে নতুন request প্রথম পেজে; **শুধু প্রথম পেজ নিজে নিজে আপডেট হয়**। অন্য পেজে সারি স্থির থাকে (উপরে "page N: not auto-refreshing" লেখা আসে), নতুন করে দেখতে রিফ্রেশ বাটন। ফিল্টার বদলালে আবার পেজ ১-এ ফেরে। মোট সংখ্যা ও "1-25 of 120" লেখা থাকে।
 
+### Catalog (`/ui/catalog`)
+চেনা provider-এর তালিকা, ঠিক ঠিকানা ও সেটিংসহ। কার্ডে আছে: সংক্ষেপে কী, **ফ্রি না কম দামি**, provider-এর **ভাষা** ("Claude format" নাকি "OpenAI style (converted)"), base URL, ফ্রি সীমা, গোপনীয়তার সতর্কতা, model ও দাম (প্রতি ১০ লাখ token, USD), আর "Checked: তারিখ ও উৎস"। **Get a key** লিংক সরাসরি provider-এর key পেজে যায়। **Add** চাপলে জানালা খোলে: key বসাও, model টিক দাও (বা নিজের model id লেখো), **Add**। এক save-এ provider, key (`.env`-এ), model সব তৈরি হয়; ফ্রি provider-এ দৈনিক সীমা নিজে বসে। উপরে ডানে **How to use free or paid AI** লিংক Instructions পেজে যায়।
+
+### Instructions (`/ui/instructions`)
+ইংরেজি ও বাংলা (ডানের সুইচ)। ৬টা ভাঁজ: ৫ ধাপে শুরু; ফ্রি বনাম পেইড; কখন কোনটা; নিজে নিজে বদলে যাওয়া; token কম রাখা; সমস্যা হলে। এই গাইডের ছোট সংস্করণ।
+
 ### Providers (`/ui/providers`)
 প্রতিটা সারি এক provider। **Add provider** বাটন উপরে ডানে।
 **Today** কলাম: এই provider আজ (router-এর ঘড়িতে রাত ১২টা থেকে) কতগুলো সফল request ও কত token সামলেছে। Daily limit দেওয়া থাকলে নিচে "limit ..." লেখা থাকে; সীমা পার হলে লাল হয় ও মাউস ধরলে কারণ দেখায় (তখন router ওই provider এড়িয়ে পরের model-এ যায়)।
@@ -189,6 +195,39 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 ---
 
 ## ৫. কাজের রেসিপি (ধাপে ধাপে)
+
+### ক-০) সবচেয়ে সহজ: Catalog থেকে provider যোগ
+1. **Catalog** পেজ → কার্ড বাছো (যেমন **Ollama Cloud** বা **Groq**) → **Get a key** দিয়ে key নাও।
+2. **Add** → key বসাও → model টিক দাও → **Add**।
+3. **Models** পেজে model-এর **⚡** চাপো। "Reachable" এলে ঠিক; না এলে কারণের নিচে সহজ ভাষার পরামর্শ আসে।
+4. Claude Code-এ `/model <model-নাম>`।
+নিজের হাতে বানানোর নিয়ম (নিচে ক) শুধু তালিকায় নেই এমন provider-এর জন্য।
+
+### প্রোটোকল: "Anthropic style" বনাম "OpenAI style"
+Claude Code Claude-এর নিজের ভাষায় কথা বলে। বেশিরভাগ কোডিং provider-এর একটা ঠিকানা আছে যেটা সেই ভাষা বোঝে (DeepSeek, Z.ai, Kimi, MiniMax, Qwen, OpenRouter, OpenCode Zen, Ollama)। কিছু ফ্রি provider শুধু **OpenAI ভাষা** জানে (Groq, Google Gemini, Cerebras, NVIDIA NIM, Mistral)। Providers → Add/Edit-এ **"Provider speaks"** থেকে বাছো। **OpenAI style** বাছলে router নিজে অনুবাদ করে: তোমার লেখা, tool call, tool-এর ফল, ছবি ও স্ট্রিমিং সব ঠিকঠাক যায়। (Claude-এর `thinking` আর cache-চিহ্ন বাদ যায়।) Base URL-এ OpenAI style হলে শেষে `/v1` থাকে (যেমন `https://api.groq.com/openai/v1`), Claude style হলে **থাকে না**, আর কোনো ক্ষেত্রেই `/v1/messages` বা `/chat/completions` লিখবে না (router নিজে জুড়ে নেয়)। ভুল ঠিকানা দিলে save-এর সময়ই কারণসহ আটকে দেয়।
+
+### Ollama: "404 path /api/v1/messages not found" কেন আর কী করবে
+- কারণ: Base URL `https://ollama.com/api` দেওয়া ছিল। router শেষে `/v1/messages` জুড়ে `https://ollama.com/api/v1/messages` ডাকে; ওটা নেই। `/api` শুধু Ollama-র নিজের ভাষার জন্য।
+- **ঠিক ঠিকানা: `https://ollama.com`** (Ollama Cloud) আর `http://localhost:11434` (নিজের কম্পিউটারে)। Ollama Cloud **Authorization: Bearer** চায় (Auth mode `bearer` বা `both`)।
+- Providers → `ollama` → Edit → Base URL ঠিক করো। এখন ভুল ঠিকানা save-ই হবে না।
+- ঠিকানা ঠিক হওয়ার পরও error এলে: **Free অ্যাকাউন্টে** শুধু কিছু "starter" model চলে এবং একবারে **১টা** request; সব model খুলতে credit কিনতে হয়। তখন অন্য model বাছো বা credit দাও। নিজের কম্পিউটারে চালালে (`ollama pull qwen3-coder`, Auth mode `none`) সীমা নেই।
+
+### ফ্রি ও কম দামি কোডিং AI: সারসংক্ষেপ (Catalog-এরই সংক্ষিপ্ত রূপ; ২০২৬-০৯-৩০ তারিখে যাচাই, সংখ্যা বদলায়)
+| ধরন | কী | ভাষা | মূল কথা |
+|---|---|---|---|
+| ফ্রি, নিজের কম্পিউটারে | Ollama local | Claude | সীমাহীন; তোমার RAM/GPU যতটা পারে |
+| ফ্রি শুরু | Ollama Cloud | Claude | ফ্রি starter ক্রেডিট, ১ request একসাথে; পরে pay-as-you-go |
+| ফ্রি শুরু | OpenRouter (`:free` model) | Claude | ২০ req/মিনিট; ৫০ req/দিন ($10 কিনলে ১০০০/দিন) |
+| ফ্রি শুরু | OpenCode Zen | Claude | কিছু model ফ্রি; key পেতে billing লাগে |
+| ফ্রি tier | Groq | OpenAI | ৩০ req/মিনিট; দিনে ১০০০ থেকে ১৪,৪০০ (model ভেদে) |
+| ফ্রি tier | Cerebras | OpenAI | ~১০ লাখ token/দিন; model তালিকা ঘনঘন বদলায় |
+| ফ্রি tier | Google Gemini | OpenAI | per-project সীমা; ফ্রিতে Google prompt ব্যবহার করতে পারে (EU/UK/EEA বাদে) |
+| ফ্রি tier | NVIDIA NIM | OpenAI | ~৪০ req/মিনিট, ফোন যাচাই |
+| ফ্রি tier | Mistral | OpenAI | Experiment tier-এ training-এ সম্মতি লাগে |
+| কম দামি | DeepSeek | Claude | Flash ≈ $0.15 in / $0.60 out (off-peak); cache-hit অনেক সস্তা |
+| কম দামি | Z.ai GLM, Kimi, MiniMax, Qwen | Claude | কম দাম; Z.ai-র Flash-এ ফ্রি tier থাকার খবর (যাচাই করে নাও) |
+Ollama Cloud-এর দাম (প্রতি ১০ লাখ token, in/out): DeepSeek V4.1 Flash $0.30/$1.20 (সপ্তাহের দিনে ১২:০০-১৮:০০ UTC-র বাইরে অর্ধেক), GLM 5.3 Flash $0.15/$0.50, GPT-OSS 120B $0.15/$0.60, Kimi K2.7 Code $0.95/$4.00, GLM 5.3 $1.40/$4.40।
+**সতর্কতা:** ফ্রি tier-এ প্রায়ই তোমার prompt provider-এর কাজে লাগে; গোপন কোড দিও না। সীমা ও দাম যেকোনো দিন বদলায়: কার্ডের "Checked" তারিখ দেখো, আর provider-এর পেজ মিলিয়ে নাও।
 
 ### ক) নতুন Provider যোগ করা (key সহ)
 উদাহরণ: OpenRouter।
@@ -302,12 +341,31 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
    - প্রথমে Measure only-তে কয়েকদিন চালাও, সংখ্যা দেখো, তারপর `On`। ঝুঁকি: agent কখনো পুরনো ফাইল আবার পড়তে পারে।
 3. **অভ্যাস:** অন্য কাজ শুরু করলে `/clear`; বড় কাজ শেষে `/compact`; দিন শেষে `/r-end`, পরদিন `/clear` তারপর `/r-start`।
 
+### ৮(০) সত্যটা আগে: token কমা আর টাকা কমা এক জিনিস নয়
+আমি `scripts/token-benchmark.mjs` দিয়ে একটা লম্বা কোডিং সেশন (২৪০ request, তোমার আসল log-এর বৃদ্ধির হার: প্রতি request-এ গড়ে ~২,৪০০ token, ৮০ request পরপর Claude Code নিজে compact করে) router-এর মধ্য দিয়ে চালিয়ে মেপেছি। Provider-এর বদলে একটা নকল server, যেটা **prompt cache-এর মতো** আচরণ করে (prompt-এর শুরুর যে অংশ আগের request-এর সাথে হুবহু মেলে সেটা "cache read", বাকিটা "fresh")। ফল (tool output = বৃদ্ধির ৮০% ধরে; এটা **অনুমান**, তোমারটা Usage → "Where your prompt tokens go"-তে দেখো):
+
+| কী করা হলো | token | টাকা: DeepSeek-ধরনের (cache সস্তা) | টাকা: cache নেই / quota-বাঁধা |
+|---|---|---|---|
+| কিছু না (Claude Code ১৬৫K-তে compact) | ২১.৬M | $০.২১৬ | $৩.২৯ |
+| Claude Code আগে compact (১২০K) | −২৪% | **−৭%** | −২৪% |
+| Router Context guard চালু | −২৭% | **+১৩%** | −২৬% |
+| Guard + Router Memory | −৪১% | **+২০%** | −৩৯% |
+| সবকিছু + ১২০K | −৪৫% | **+১৭%** | −৪৪% |
+| Guard + Memory, তবে cache-সস্তা model-এ (Auto) | ০% (ছোঁয়া হয়নি) | ০% | ০% |
+(tool output ৫০% ধরলে: guard −১৫% token কিন্তু +২৪% টাকা; memory −৪৩% token কিন্তু +৩৮% টাকা।)
+
+**কেন টাকা বাড়ে:** DeepSeek-এর মতো provider-এ cache-থেকে-পড়া input সাধারণ input-এর প্রায় ৫০ গুণ সস্তা। Guard বা Memory prompt-এর **শুরুর অংশ** বদলালে provider পুরো prompt একবার **পুরো দামে** আবার পড়ে। তাই token কমলেও (সস্তা) cache-পড়া কমার সাশ্রয় ছোট, আর পুরো দামে আবার-পড়ার খরচ বড়। **যেখানে cache নেই বা quota আছে** (ফ্রি tier, Groq, Gemini...) সেখানে token-ই আসল মুদ্রা, আর কমানো সরাসরি লাভ।
+
+**তাই ডিফল্ট এখন "Auto"** (Settings → Context guard → "Where to shrink prompts"): router শুধু সেখানে ছাঁটে যেখানে লাভ: (১) দৈনিক সীমা দেওয়া provider, (২) ছোট context window-এর model, (৩) দাম বসানো নেই এমন model (ফ্রি/অজানা ধরা হয়), (৪) cache-ছাড় নেই এমন model। যেসব model-এ cache ৫০%-এর বেশি সস্তা (যেমন দাম বসানো DeepSeek) সেগুলো ছোঁয়া হয় না। **তাই Settings → Pricing-এ দাম বসিয়ে রাখো।** সবখানে জোর করে চালাতে চাইলে "Every provider"।
+আরও একটা নিয়ম: আগে guard প্রায় প্রতি request-এ একটা একটা করে পুরনো result মুছে prompt-এর শুরু বদলাত (cache ভেঙে যেত)। এখন মোট যা মোছা যাবে সেটা (উঁচু-নিচু সীমার ফাঁকের অর্ধেকের) কম হলে কিছুই ছোঁয় না।
+**DeepSeek-এ টাকা বাঁচানোর আসল উপায়:** Claude Code-এ `CLAUDE_CODE_AUTO_COMPACT_WINDOW` কমানো (উপরে B), অন্য কাজে `/clear`, বড় ফাইল/লগ পুরোটা না পড়া (টুকরো করে পড়া), সস্তা model, আর **fallback-এ অন্য provider-এ যাওয়া কমানো** (প্রতিবার অন্য provider-এ গেলে সেখানকার cache শূন্য, পুরো prompt পুরো দামে)। নিজের provider-এর দামে মাপতে: `npm run bench:tokens`।
+
 ### ৮(ক) আরও ছোট করার দুটো সুইচ (Settings → Context guard)
 - **Also shrink old tool calls** (ডিফল্ট চালু): পুরনো tool output ছাঁটার সময় ওই tool-এর **ডাকের** ভেতরের বড় লেখাও ছোট হয়। যেমন আগের `Write`-এ পুরো ফাইলের লেখা ছিল, এখন থাকে `[router: 9000 characters cleared ...]`; ফাইলের পথ ও বাকি ঘর থাকে।
 - **Shrink big pasted text in old messages** (ডিফল্ট **বন্ধ**, কারণ এটা তোমার নিজের লেখা বদলায়): তোমার পুরনো মেসেজে বিশাল paste (log, ফাইল) থাকলে প্রথম ১৫০০ আর শেষ ৫০০ অক্ষর থাকে। **তোমার প্রথম মেসেজ আর সবচেয়ে নতুন দুটো কখনো ছোঁয়া হয় না।** "A paste counts as big above" ঘরে সীমা (ডিফল্ট ১২,০০০ অক্ষর)।
 
 ### ৮(খ) Router Memory: router নিজে মনে রাখে (Settings → Memory)
-- **কেন:** model-এর স্মৃতি নেই, তাই Claude Code পুরো কথোপকথন আবার পাঠায়। Router memory তার হয়ে মনে রাখে: কথোপকথন লম্বা হলে একটা **সস্তা model** (যেটা তুমি বাছো) **পুরনো মেসেজগুলোর সারাংশ** লেখে। সেটা SQLite-এ জমা থাকে, আর পরের request থেকে পুরনো মেসেজের **বদলে** ওই সারাংশ যায়। প্রতিবার হুবহু একই লেখা যায়, তাই provider-এর cache কাজ করে।
+- **কেন:** model-এর স্মৃতি নেই, তাই Claude Code পুরো কথোপকথন আবার পাঠায়। Router memory তার হয়ে মনে রাখে: কথোপকথন লম্বা হলে একটা **সস্তা model** (যেটা তুমি বাছো) **পুরনো মেসেজগুলোর সারাংশ** লেখে। সেটা SQLite-এ জমা থাকে, আর পরের request থেকে পুরনো মেসেজের **বদলে** ওই সারাংশ যায়। দুটো সারাংশের মাঝে প্রতিবার হুবহু একই লেখা যায়। **মনে রাখো (৮(০)):** এটা token কমায়, কিন্তু cache-সস্তা provider-এ টাকা বাড়াতে পারে, তাই "Auto" নিয়মে সেখানে চলে না।
 - **অপেক্ষা করতে হয় না:** যে request সীমা পার করে সেটা আগের মতোই যায়। সারাংশ **পেছনে** লেখা হয়, পরের request থেকে কাজে লাগে।
 - **নিরাপত্তা:** তোমার আসল প্রথম অনুরোধ হুবহু সারাংশের ভেতরে থাকে। সবচেয়ে নতুন মেসেজগুলো কখনো সারাংশ হয় না। কথোপকথনের শুরু বদলে গেলে (যেমন Claude Code নিজে `/compact` করলে) পুরনো সারাংশ আর লাগানো হয় না। সারাংশ-model ব্যর্থ হলে তোমার request অপরিবর্তিত যায়, আর router ৫ মিনিট পরে আবার চেষ্টা করে।
 - **খরচ ও ঝুঁকি:** প্রতিটা সারাংশে একবার ওই model-এর খরচ (History-তে "router memory summary" নামে দেখা যায়; কিছু লুকানো নেই), আর সারাংশ থেকে ছোটখাটো খুঁটিনাটি হারাতে পারে। তাই আগে **Measure only**।
@@ -339,6 +397,10 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 | UI-তে বারবার login চাইছে | কুকি মুছছে (private window/অন্য domain) | `http://127.0.0.1:21450/ui` ঠিক এই ঠিকানায়, সাধারণ window-এ |
 | Live-এ গতি মিটার নড়ছে না | কোনো request চলছে না | Claude Code-এ কিছু চালাও |
 | Cost `$0.00` | model-এ দাম বসানো নেই | ৫(জ) |
+| Test-এ 404 "path not found" | Base URL ভুল (যেমন `https://ollama.com/api`) | ঠিকানা ঠিক করো: Ollama Cloud = `https://ollama.com`; শেষে `/v1/messages` বা ভুল `/api` নয় |
+| Test-এ 401/403 | key ভুল/মেয়াদ শেষ, বা Auth mode মেলেনি | key নতুন করে বসাও; Ollama Cloud-এ `bearer` বা `both` |
+| Test-এ 429/402 | ফ্রি কোটা/ব্যালেন্স শেষ, বা একসাথে বেশি request | provider-এর usage পেজ দেখো; অন্য model বা credit |
+| OpenAI-style provider-এ tool call/ছবি ঠিক নয় | সব provider সব ফিচার পারে না | সেই provider-এর model-এ কাজ না হলে Claude-format-এর model বাছো |
 | Model-এর ফর্মে Key ঘরটা ধূসর | Provider-এর Auth mode `none`, অথবা "Paste a new API key" খোলা আছে | `none` হলে key লাগে না; নতুন key দিতে চাইলে Auth mode বদলাও |
 | Providers-এ Today লাল | daily limit পৌঁছে গেছে | Edit → limit বাড়াও বা খালি করো, নইলে মধ্যরাত পর্যন্ত এড়ানো হবে |
 | History-র পেজ ২-এ সারি নড়ছে না | ইচ্ছাকৃত: শুধু পেজ ১ নিজে আপডেট হয় | রিফ্রেশ বাটন, বা পেজ ১-এ যাও |

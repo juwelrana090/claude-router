@@ -12,6 +12,8 @@ import {
 import { DATA_DIR, DB_FILE, SETTING_DEFAULTS, allSettings, db, setSetting } from "./db";
 import { userCount } from "./auth";
 import { budgetReason } from "./capacity";
+import { openaiHeaders, toOpenAIRequest } from "./openai";
+import { CATALOG } from "./catalog";
 import { clearMemory, deleteMemory, listMemory } from "./memory";
 import * as history from "./history";
 import {
@@ -111,6 +113,18 @@ function keyView(envName: string): KeyView {
   };
 }
 
+/** Plain-language next step for a failed connection test. */
+function testHint(status: number, detail: string, baseURL: string, protocol: string): string | null {
+  const url = protocol === "openai" ? `${baseURL}/chat/completions` : `${baseURL}/v1/messages`;
+  if (status === 404 && /path|not found|404|no route/i.test(detail)) {
+    return `The address looks wrong: the router called ${url} and the server does not have it. Fix the Base URL in Providers > Edit (do not add /v1/messages yourself; for Ollama cloud use https://ollama.com).`;
+  }
+  if (status === 401 || status === 403) return "The provider refused the key. Check that the key is the right one for this provider and not expired, and that Auth mode matches (Ollama cloud needs bearer or both).";
+  if (status === 402 || status === 429) return "The provider says no balance, no free credits left, or too many requests. Check the provider's usage page; free plans often allow only some models.";
+  if (status === 400 && /model/i.test(detail)) return "The provider does not know this model id. Copy the exact id from the provider's model list.";
+  return null;
+}
+
 function providerView(name: string, p: ProviderCfg) {
   const keyless = p.auth === "none";
   const keys = p.keys.map(keyView);
@@ -119,6 +133,7 @@ function providerView(name: string, p: ProviderCfg) {
     name,
     baseURL: p.baseURL,
     auth: p.auth,
+    protocol: p.protocol ?? "anthropic",
     dropBeta: !!p.dropBeta,
     dropBodyFields: p.dropBodyFields ?? [],
     disabled: !!p.disabled,
@@ -945,10 +960,12 @@ on("POST", /^\/admin\/models\/([^/]+)\/test$/, async (req, res, [alias]) => {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 20000);
   try {
-    const up = await fetch(`${p.baseURL}/v1/messages`, {
+const isOpenAI = p.protocol === "openai";
+    const probe = { model: m.model, max_tokens: 1, messages: [{ role: "user", content: "hi" }] };
+    const up = await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
       method: "POST",
-      headers: buildHeaders(req, p, keyName),
-      body: JSON.stringify({ model: m.model, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+      headers: isOpenAI ? openaiHeaders(p, keyName) : buildHeaders(req, p, keyName),
+      body: isOpenAI ? toOpenAIRequest(probe, m, p) : JSON.stringify(probe),
       signal: ac.signal,
     });
     const text = await up.text();
@@ -966,8 +983,9 @@ on("POST", /^\/admin\/models\/([^/]+)\/test$/, async (req, res, [alias]) => {
       ms: Date.now() - started,
       provider: m.provider,
       model: m.model,
-      key: keyView(keyName),
+key: keyView(keyName),
       detail,
+      hint: up.ok ? null : testHint(up.status, detail, p.baseURL, p.protocol ?? "anthropic"),
     });
   } catch (e) {
     sendJSON(res, 200, {
@@ -1100,6 +1118,102 @@ on("DELETE", /^\/admin\/memory\/([^/]+)$/, (_req, res, [session]) => {
   sendJSON(res, 200, { deleted: deleteMemory(decodeURIComponent(session)) });
 });
 
+// ---------- provider catalog: add a known provider and its models in one save ----------
+const normURL = (u: string): string => u.trim().replace(/\/+$/, "").toLowerCase();
+
+on("GET", /^\/admin\/catalog$/, (_req, res) => {
+  const c = getCfg();
+  const entries = CATALOG.map((e) => {
+    const installed = Object.entries(c.providers).find(([, p]) => normURL(p.baseURL) === normURL(e.baseURL))?.[0] ?? null;
+    const have = installed ? Object.values(c.models).filter((m) => m.provider === installed).map((m) => m.model) : [];
+    return { ...e, installed, addedModels: have };
+  });
+  sendJSON(res, 200, { version: configVersion(), envVersion: envVersion(), entries });
+});
+
+on("POST", /^\/admin\/catalog\/add$/, async (req, res) => {
+  const body = await readJSONBody(req);
+  const version = expectVersion(body);
+  const entry = CATALOG.find((e) => e.id === body.id);
+  if (!entry) return fail(res, 404, "not_found_error", `No catalog entry "${String(body.id)}"`);
+  const c = getCfg();
+  const errors: { field: string; message: string }[] = [];
+
+  // which router provider receives the models
+  const sameURL = Object.entries(c.providers).find(([, p]) => normURL(p.baseURL) === normURL(entry.baseURL))?.[0];
+  const name = typeof body.providerName === "string" && body.providerName.trim() ? validateProviderName(body.providerName.trim()) : sameURL ?? entry.id;
+  let existing = c.providers[name];
+  if (existing && normURL(existing.baseURL) !== normURL(entry.baseURL)) {
+    throw new ValidationError([{ field: "providerName", message: `"${name}" already exists with another address (${existing.baseURL}). Choose a different name.` }]);
+  }
+  let cfg: Config = c;
+  if (!existing) {
+    const created = validateProviderBody({
+      baseURL: entry.baseURL, auth: entry.auth, protocol: entry.protocol,
+      ...(entry.suggestedLimits?.dailyRequests ? { dailyRequests: entry.suggestedLimits.dailyRequests } : {}),
+      ...(entry.suggestedLimits?.dailyTokens ? { dailyTokens: entry.suggestedLimits.dailyTokens } : {}),
+    });
+    cfg = { ...c, providers: { ...c.providers, [name]: { ...created, keys: [] } } };
+    existing = cfg.providers[name];
+  }
+
+  // the key (optional here; it can be attached later)
+  let env: Record<string, string> | undefined;
+  let envName = "";
+  const value = typeof body.key === "string" ? body.key.trim() : "";
+  if (value) {
+    if (entry.auth === "none") errors.push({ field: "key", message: `${entry.name} needs no key` });
+    else if (value.length < 4) errors.push({ field: "key", message: "paste the API key (at least 4 characters)" });
+    else {
+      const owner = new Set<string>();
+      for (const pv of Object.values(cfg.providers)) for (const k of pv.keys) owner.add(k);
+      const base = name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+      let n = 1;
+      while (owner.has(`${base}_KEY_${n}`)) n++;
+      envName = `${base}_KEY_${n}`;
+      cfg = { ...cfg, providers: { ...cfg.providers, [name]: { ...cfg.providers[name], keys: [...cfg.providers[name].keys, envName] } } };
+      env = { [envName]: value };
+    }
+  }
+
+  // the models
+  const wanted = Array.isArray(body.models) ? body.models : [];
+  if (!wanted.length) errors.push({ field: "models", message: "choose at least one model, or type a model id" });
+  const created: string[] = [];
+  const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+|-+$/g, "").slice(0, 56) || "model";
+  wanted.forEach((w: unknown, i: number) => {
+    const r = (typeof w === "string" ? { id: w } : (w ?? {})) as Record<string, unknown>;
+    const id = typeof r.id === "string" ? r.id.trim() : "";
+    if (!id || id.length > 200) { errors.push({ field: `models.${i}.id`, message: "model id is required" }); return; }
+    const known = entry.models.find((m) => m.id === id);
+    let alias = typeof r.alias === "string" && r.alias.trim() ? r.alias.trim() : slug(id);
+    if (!(typeof r.alias === "string" && r.alias.trim())) {
+      let n = 2;
+      const first = alias;
+      while (cfg.models[alias]) alias = `${first}-${n++}`;
+    }
+    try {
+      validateModelAlias(alias);
+      if (cfg.models[alias]) throw new ValidationError([{ field: `models.${i}.alias`, message: `"${alias}" already exists` }]);
+      const m = validateModelBody({ provider: name, model: id, ...(known?.price ? { price: known.price } : {}) }, cfg);
+      cfg = { ...cfg, models: { ...cfg.models, [alias]: m } };
+      created.push(alias);
+    } catch (e) {
+      errors.push(...(e as ValidationError).errors.map((x) => ({ ...x, field: x.field.startsWith("models") ? x.field : `models.${i}.${x.field}` })));
+    }
+  });
+  if (errors.length) throw new ValidationError(errors);
+
+  commit(cfg, version);
+  if (env) {
+    commitEnv(env, [], typeof body.envVersion === "string" ? body.envVersion : undefined);
+    resetCooldown(envName);
+  }
+  const warning = entry.auth !== "none" && !getCfg().providers[name].keys.some((k) => process.env[k])
+    ? "No key yet: open Providers > Keys and paste one, or these models will say NO KEY." : null;
+  sendJSON(res, 201, { version: configVersion(), envVersion: envVersion(), provider: providerView(name, getCfg().providers[name]), models: created, warning });
+});
+
 on("GET", /^\/admin\/app-settings$/, (_req, res) => sendJSON(res, 200, { settings: allSettings() }));
 
 on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
@@ -1118,7 +1232,10 @@ on("PUT", /^\/admin\/app-settings$/, async (req, res) => {
     else if (k === "context.warnTokens") int(k, 10_000, 2_000_000);
     else if (k === "pricing.peakMultiplier") {
       const n = Number(input[k]);
-      if (!Number.isFinite(n) || n < 1 || n > 10) errors.push({ field: k, message: "must be a number from 1 to 10" }); else clean[k] = n;
+if (!Number.isFinite(n) || n < 1 || n > 10) errors.push({ field: k, message: "must be a number from 1 to 10" }); else clean[k] = n;
+    } else if (k === "optimise.scope") {
+      if (input[k] !== "auto" && input[k] !== "always") errors.push({ field: k, message: "must be auto or always" });
+      else clean[k] = input[k];
     } else if (k === "guard.trimInputs" || k === "guard.trimPastes") {
       if (typeof input[k] !== "boolean") errors.push({ field: k, message: "must be true or false" });
       else clean[k] = input[k];

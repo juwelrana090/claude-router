@@ -174,7 +174,7 @@ const sys = await (await admin("/admin/system")).json();
 t("system info gives repo root and statusline script path", sys.root === home && sys.statusline === path.join(home, "scripts", "statusline.mjs"));
 
 child.kill();
-fs.rmSync(home, { recursive: true, force: true });
+try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* Windows may still hold the DB file */ }
 mock.close();
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

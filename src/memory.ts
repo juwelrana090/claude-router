@@ -5,6 +5,7 @@ import { getCfg } from "./config";
 import { costOf } from "./pricing";
 import { db, getSetting } from "./db";
 import * as history from "./history";
+import { callOnce } from "./openai";
 import { buildBody, buildHeaders, keyOrder } from "./routing";
 import type { InFlight, RecentEntry } from "./live";
 import * as live from "./live";
@@ -194,13 +195,19 @@ async function callSummariser(alias: string, prompt: string): Promise<{ text: st
   const key = keyOrder(p, m, "memory").find((k) => live.cooldownLeft(k) === 0);
   if (!key) throw new Error(`no usable key for memory model "${alias}"`);
   const started = Date.now();
-  const body = buildBody({ model: alias, max_tokens: 2000, system: SYSTEM, messages: [{ role: "user", content: prompt }], stream: false }, m, p);
-  const res = await fetch(`${p.baseURL}/v1/messages`, {
-    method: "POST", headers: buildHeaders(fakeReq, p, key), body, signal: AbortSignal.timeout(90_000),
-  });
-  const raw = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} from ${m.provider}: ${raw.slice(0, 120).replace(/[A-Za-z0-9_-]{28,}/g, "[redacted]")}`);
-  const j = JSON.parse(raw);
+  const payload = { model: alias, max_tokens: 2000, system: SYSTEM, messages: [{ role: "user", content: prompt }], stream: false };
+  let status: number, raw: string, j: Json;
+  if (p.protocol === "openai") {
+    const r = await callOnce(m, p, key, payload, AbortSignal.timeout(90_000));
+    status = r.status; raw = r.raw; j = r.json;
+  } else {
+    const res = await fetch(`${p.baseURL}/v1/messages`, {
+      method: "POST", headers: buildHeaders(fakeReq, p, key), body: buildBody(payload, m, p), signal: AbortSignal.timeout(90_000),
+    });
+    status = res.status; raw = await res.text();
+    j = res.ok ? JSON.parse(raw) : null;
+  }
+  if (status < 200 || status >= 300 || !j) throw new Error(`HTTP ${status} from ${m.provider}: ${raw.slice(0, 120).replace(/[A-Za-z0-9_-]{28,}/g, "[redacted]")}`);
   const text = (Array.isArray(j.content) ? j.content : []).filter((b: Json) => b?.type === "text").map((b: Json) => String(b.text ?? "")).join("\n").trim();
   if (text.length < 40) throw new Error("the memory model returned no usable summary");
   const us = j.usage ?? {};
