@@ -331,8 +331,13 @@ export function baseURLProblem(baseURL: string, protocol: Protocol): string | nu
   let u: URL;
   try { u = new URL(baseURL); } catch { return null; }
   const path = u.pathname.replace(/\/+$/, "");
-  if (/\/v1\/messages$/.test(path) || /\/chat\/completions$/.test(path)) {
-    return "remove /v1/messages or /chat/completions from the end: the router adds the final part itself";
+  if (/\/chat\/completions$/.test(path)) {
+    const fixed = `${u.origin}${path.replace(/\/chat\/completions$/, "")}`;
+    return `remove /chat/completions from the end and set "Provider speaks" to OpenAI style: use ${fixed} (the router adds the final part itself)`;
+  }
+  if (/\/v1\/messages$/.test(path)) {
+    const fixed = `${u.origin}${path.replace(/\/v1\/messages$/, "")}`;
+    return `remove /v1/messages from the end: use ${fixed} (the router adds the final part itself)`;
   }
   if (protocol === "anthropic" && /\/v1$/.test(path)) {
     return "remove /v1 from the end: for an Anthropic-style provider the router adds /v1/messages itself";

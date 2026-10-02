@@ -227,7 +227,16 @@ Claude Code Claude-এর নিজের ভাষায় কথা বলে
 | কম দামি | DeepSeek | Claude | Flash ≈ $0.15 in / $0.60 out (off-peak); cache-hit অনেক সস্তা |
 | কম দামি | Z.ai GLM, Kimi, MiniMax, Qwen | Claude | কম দাম; Z.ai-র Flash-এ ফ্রি tier থাকার খবর (যাচাই করে নাও) |
 Ollama Cloud-এর দাম (প্রতি ১০ লাখ token, in/out): DeepSeek V4.1 Flash $0.30/$1.20 (সপ্তাহের দিনে ১২:০০-১৮:০০ UTC-র বাইরে অর্ধেক), GLM 5.3 Flash $0.15/$0.50, GPT-OSS 120B $0.15/$0.60, Kimi K2.7 Code $0.95/$4.00, GLM 5.3 $1.40/$4.40।
-**সতর্কতা:** ফ্রি tier-এ প্রায়ই তোমার prompt provider-এর কাজে লাগে; গোপন কোড দিও না। সীমা ও দাম যেকোনো দিন বদলায়: কার্ডের "Checked" তারিখ দেখো, আর provider-এর পেজ মিলিয়ে নাও।
+**সতর্কতা:** ফ্রি tier-এ প্রায়ই তোমার prompt provider-এর কাজে লাগে; গোপন কোড দিও না। সীমা ও দাম যেকোনো দিন বদলায়: কার্ডের "Checked" তারিখ দেখো, আর provider-ের পেজ মিলিয়ে নাও।
+
+### Command Code: কেন কাজ করেনি, আর ঠিক সেটিং
+- **Command Code-এর নিয়ম (তাদের ডকুমেন্টেশন):** Base `https://api.commandcode.ai/provider/v1`, Auth `Authorization: Bearer <key>`। **Claude model শুধু `/v1/messages`-এ** (Claude-ভাষা)। **বাকি সব model (DeepSeek, GLM, Kimi, Qwen, ফ্রি model...) `/v1/chat/completions`-এ** (OpenAI-ভাষা)। ভুল endpoint-এ পাঠালে 400।
+- **তোমার সেটিংয়ে দুটো ভুল ছিল:** (১) provider "Claude style" ছিল, তাই router `/provider/v1/messages` ডাকছিল, অথচ ফ্রি model Claude নয়; (২) model id `space-bunny-alpha-free` ভুল: ওটা ওয়েবপেজের লিংকের নাম। আসল id **`stealth/space-bunny-alpha`**।
+- **ঠিক সেটিং:** Providers → `commandcode` → Edit: **Provider speaks = OpenAI style**, **Base URL = `https://api.commandcode.ai/provider/v1`** (শেষে `/chat/completions` লিখবে না)। Model: `stealth/space-bunny-alpha`।
+- **Claude model চাইলে আলাদা provider:** Catalog → "Command Code (Claude models)" (Claude style, Base `https://api.commandcode.ai/provider`)। একই key আবার বসাতে হবে।
+- **আগে থেকে শর্ত:** API ব্যবহার করতে **Go প্ল্যান ছাড়া** যেকোনো প্ল্যান (GOAT, Pro, Max, Team) বা $15-এর Provider প্ল্যান লাগে; ফ্রি model চালাতে অ্যাকাউন্টে **$1 ক্রেডিট** থাকতে হয়। Go প্ল্যানে 403 `upgrade_required` আসে।
+- **সতর্কতা:** `stealth/space-bunny-alpha`-র provider prompt জমিয়ে রাখতে পারে (training-এ ব্যবহার করে না বলে) এবং এটা zero-data-retention-এ চলে না। গোপন কোড দিও না। `ling-3.1-flash:free` দিনে ৩০০ request, `ling-3.0-flash-sante:free` ১০০ request।
+- **ঠিকানা ভুল দিলে:** `.../chat/completions` বা `.../v1/messages` লিখলে save হবে না; বার্তায় বলে দেয় কী লিখতে হবে।
 
 ### ক) নতুন Provider যোগ করা (key সহ)
 উদাহরণ: OpenRouter।
@@ -398,6 +407,8 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 | Live-এ গতি মিটার নড়ছে না | কোনো request চলছে না | Claude Code-এ কিছু চালাও |
 | Cost `$0.00` | model-এ দাম বসানো নেই | ৫(জ) |
 | Test-এ 404 "path not found" | Base URL ভুল (যেমন `https://ollama.com/api`) | ঠিকানা ঠিক করো: Ollama Cloud = `https://ollama.com`; শেষে `/v1/messages` বা ভুল `/api` নয় |
+| Test-এ 400 "Wrong endpoint for model" | Claude model OpenAI-style provider-এ, বা অন্য model Claude-style provider-এ | "Provider speaks" মেলাও; Command Code-এ Claude আলাদা provider |
+| Test-এ 403 `upgrade_required` | প্ল্যানে API নেই (Command Code Go) | প্ল্যান বদলাও বা অন্য provider |
 | Test-এ 401/403 | key ভুল/মেয়াদ শেষ, বা Auth mode মেলেনি | key নতুন করে বসাও; Ollama Cloud-এ `bearer` বা `both` |
 | Test-এ 429/402 | ফ্রি কোটা/ব্যালেন্স শেষ, বা একসাথে বেশি request | provider-এর usage পেজ দেখো; অন্য model বা credit |
 | OpenAI-style provider-এ tool call/ছবি ঠিক নয় | সব provider সব ফিচার পারে না | সেই provider-এর model-এ কাজ না হলে Claude-format-এর model বাছো |

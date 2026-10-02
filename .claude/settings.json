@@ -179,7 +179,8 @@
       "Read(//Users/dalawerhossainjuwel/.claude/**)",
       "Bash(node -e \"const s=require\\('./settings.json'\\); console.log\\('valid JSON'\\); console.log\\('AUTO_COMPACT_WINDOW =', JSON.stringify\\(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW\\)\\); console.log\\('DISABLE_1M_CONTEXT =', JSON.stringify\\(s.env.CLAUDE_CODE_DISABLE_1M_CONTEXT\\)\\); console.log\\('env keys =', Object.keys\\(s.env\\).length\\);\")",
       "Bash(kill 12065 12046)",
-      "Bash(break)"
+      "Bash(break)",
+      "Bash(node scripts/fix-commandcode.mjs)"
     ],
     "deny": [
       "Write(~/**)",

@@ -123,6 +123,8 @@ function testHint(status: number, detail: string, baseURL: string, protocol: str
   if (status === 404 && /path|not found|404|no route/i.test(detail)) {
     return `The address looks wrong: the router called ${url} and the server does not have it. Fix the Base URL in Providers > Edit (do not add /v1/messages yourself; for Ollama cloud use https://ollama.com).`;
   }
+  if (status === 403 && /upgrade/i.test(detail)) return "The provider says your plan has no API access (Command Code: every plan except Go has it). Upgrade the plan or use another provider.";
+  if (status === 400 && /endpoint|\/messages|chat\/completions|wrong/i.test(detail)) return "Wrong format for this model: some gateways (Command Code, for example) serve Claude models only in Claude format (/v1/messages) and every other model only in OpenAI format (/chat/completions). Make \"Provider speaks\" match the model, or add a second provider for the other format.";
   if (status === 401 || status === 403) return "The provider refused the key. Check that the key is the right one for this provider and not expired, and that Auth mode matches (Ollama cloud needs bearer or both).";
   if (status === 402 || status === 429) return "The provider says no balance, no free credits left, or too many requests. Check the provider's usage page; free plans often allow only some models.";
   if (status === 400 && /model/i.test(detail)) return "The provider does not know this model id. Copy the exact id from the provider's model list.";
