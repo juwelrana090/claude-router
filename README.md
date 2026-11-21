@@ -48,9 +48,11 @@ build). No bundler, no framework, no CDN, no external requests.
 ### Cost safety
 
 - Every read path is local: `GET` endpoints and the live SSE stream **never** call an
-  upstream provider. The only exception is the explicit **Test** button
+  upstream provider. The only exceptions are the explicit **Test** button
   (`POST /admin/models/:alias/test`), which requires a confirm dialog and sends exactly one
-  request with `max_tokens: 1`. Test calls are not recorded in `logs/usage.jsonl`.
+  request with `max_tokens: 1`, and **Fetch live models** on a provider
+  (`GET /admin/providers/:name/models`), which sends one `GET {baseURL}/models` request and
+  caches the answer for 5 minutes. Neither is recorded in `logs/usage.jsonl`.
 - Monitoring hooks on the proxy path are O(1), allocation-light and wrapped in `try/catch`,
   so a bug in the live tracking can never fail a `/v1/messages` request.
 
@@ -129,6 +131,7 @@ All endpoints require the router key.
 | POST | `/admin/providers/:name/keys` | `{envName, value}` — add or replace |
 | DELETE | `/admin/providers/:name/keys/:envName` | removes the `.env` line too |
 | POST | `/admin/providers/:name/enable\|disable` | `disabled` providers are skipped by failover |
+| GET | `/admin/providers/:name/models` | Live model list straight from the provider (`GET {baseURL}/models`, or `/v1/models` for Anthropic-style), cached 5 min |
 | GET/POST | `/admin/models` | list / create |
 | GET/PUT/DELETE | `/admin/models/:alias` | DELETE needs `?cascade=1` when referenced |
 | POST | `/admin/models/:alias/test` | `{confirm:true}` — the only endpoint that calls an upstream |
@@ -150,15 +153,37 @@ Delete conflicts come back as `409` with exactly what blocks them:
   "hint": "Repeat with ?cascade=1 to delete those models and clean every reference." }
 ```
 
+### Model names, direct routes and capabilities
+
+How a client-sent `model` name is resolved, in order:
+
+1. exact model alias (`glm`, `ds-pro`, …)
+2. **`provider/model-id` direct route** — anything before the first `/` must be a configured
+   provider name (exact); the rest is the upstream model id (it may itself contain `/`,
+   e.g. `openrouter/deepseek/deepseek-chat`). A direct route uses that provider's whole key
+   pool, has no alias and no fallback chain, and is not stored anywhere.
+3. `opus` / `sonnet` / `haiku` alias substring
+4. `defaultModel`
+
+Each model may declare `capabilities: { tools?: boolean, vision?: boolean }`. Only an
+explicit `false` is meaningful: the router then refuses the request up front with a `400`
+("does not support tools/images") instead of letting it fail upstream. Absent flags mean
+"assume supported", so existing configs are unaffected. Direct routes carry no flags.
+
+Provider catalog note: Azure OpenAI, AWS Bedrock and Google Vertex are **not** supported —
+their token/signature auth schemes are not implemented. Use their OpenAI-compatible
+gateways or put a LiteLLM proxy (catalog card) in front of them.
+
 ---
 
 ## Development
 
 ```bash
-npm run check        # tsc --noEmit
-npm run smoke        # 12 proxy regression tests (mock upstreams, offline)
-npm run smoke:admin  # 156 admin/UI API tests (mock upstreams, offline)
-npm run smoke:all    # both
+npm run check              # tsc --noEmit
+npm run smoke              # 12 proxy regression tests (mock upstreams, offline)
+npm run smoke:admin        # 156 admin/UI API tests (mock upstreams, offline)
+npm run smoke:discovery    # discovery, direct routes, capabilities (mock upstreams, offline)
+npm run smoke:all          # every suite: proxy, admin, guard, routing, capacity, memory, providers, discovery, optimise
 ```
 
 `npm run build` runs `tsc` and then copies `src/ui/index.html` to `dist/ui/index.html`.
@@ -166,12 +191,13 @@ npm run smoke:all    # both
 Source layout:
 
 ```
-src/index.ts    server + proxy (the hot path)
-src/config.ts   env, config shape, atomic writes, backups, .env editing, validation
-src/routing.ts  model/key resolution and request shaping shared by proxy and admin
-src/live.ts     in-memory live state: in-flight, recent ring, cooldowns, counters, SSE hub
-src/admin.ts    /admin/* handlers
-src/ui/         the single-file UI
+src/index.ts      server + proxy (the hot path)
+src/config.ts     env, config shape, atomic writes, backups, .env editing, validation
+src/routing.ts    model/key resolution and request shaping shared by proxy and admin
+src/discovery.ts  live model list from a provider (GET /models, cached 5 min)
+src/live.ts       in-memory live state: in-flight, recent ring, cooldowns, counters, SSE hub
+src/admin.ts      /admin/* handlers
+src/ui/           the single-file UI
 ```
 
 ---

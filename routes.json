@@ -54,9 +54,23 @@
       "baseURL": "https://api.commandcode.ai/provider/v1",
       "auth": "bearer",
       "keys": [
-        "COMMANDCODE_KEY_1"
+        "COMMANDCODE_KEY_1",
+        "CC_01"
       ],
       "protocol": "openai"
+    },
+    "gemini": {
+      "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "auth": "bearer",
+      "keys": [
+        "GEMINI_KEY_1"
+      ],
+      "protocol": "openai"
+    },
+    "cliproxyapi": {
+      "baseURL": "http://127.0.0.1:8317",
+      "auth": "none",
+      "keys": []
     }
   },
   "models": {

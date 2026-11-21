@@ -78,6 +78,8 @@ export interface ModelCfg {
   contextWindow?: number; // the model's real context window in tokens; bigger prompts are trimmed or the route is skipped
   fallback?: string[]; // other router model names, tried in order
   price?: { in: number; out: number; cacheRead?: number; peak?: boolean }; // USD per 1M tokens; peak = provider charges more in its peak hours
+  /** Truth in advertising: false = the model cannot do it and the router refuses such requests with a clear 400. Absent = assume supported. */
+  capabilities?: { tools?: boolean; vision?: boolean };
 }
 
 export interface Config {
@@ -534,6 +536,28 @@ export function validateModelBody(
     }
   }
 
+  let capabilities = existing?.capabilities;
+  if (body.capabilities === null) {
+    capabilities = undefined; // explicit clear
+  } else if (body.capabilities !== undefined) {
+    const cap = body.capabilities as Record<string, unknown>;
+    if (typeof cap !== "object" || Array.isArray(cap)) {
+      errors.push({ field: "capabilities", message: "must be an object like {tools: false, vision: false}" });
+    } else {
+      const parsed: NonNullable<ModelCfg["capabilities"]> = {};
+      for (const slot of ["tools", "vision"] as const) {
+        const v = cap[slot];
+        if (v === undefined || v === "") continue;
+        if (typeof v !== "boolean") {
+          errors.push({ field: `capabilities.${slot}`, message: "must be true or false (leave empty if unknown)" });
+        } else if (v === false) {
+          parsed[slot] = false; // true is the default; only the explicit "cannot" is stored
+        }
+      }
+      capabilities = parsed.tools !== undefined || parsed.vision !== undefined ? parsed : undefined;
+    }
+  }
+
   if (errors.length) throw new ValidationError(errors);
 
   const out: ModelCfg = { provider: provider as string, model: (model as string).trim() };
@@ -542,6 +566,7 @@ export function validateModelBody(
   if (contextWindow !== undefined) out.contextWindow = contextWindow;
   if (fallback?.length) out.fallback = fallback;
   if (price) out.price = price;
+  if (capabilities) out.capabilities = capabilities;
   return out;
 }
 

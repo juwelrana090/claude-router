@@ -21,6 +21,7 @@ import {
   lastUsedKey, lastUsedProvider, providerRollup, recent, resetCooldown, rollup, sseClientCount,
 } from "./live";
 import { buildHeaders, keyOrder } from "./routing";
+import { listUpstreamModels } from "./discovery";
 import * as eta from "./eta";
 
 const LOG_FILE = path.join(process.env.ROUTER_HOME ?? path.resolve(__dirname, ".."), "logs", "usage.jsonl");
@@ -603,6 +604,20 @@ on("GET", /^\/admin\/providers\/([^/]+)$/, (_req, res, [name]) => {
   const p = c.providers[name];
   if (!p) return fail(res, 404, "not_found_error", `No provider "${name}"`);
   sendJSON(res, 200, { version: configVersion(), provider: providerView(name, p) });
+});
+
+// Live model list from the provider itself (GET {baseURL}/models or /v1/models, cached 5 min).
+on("GET", /^\/admin\/providers\/([^/]+)\/models$/, async (_req, res, [name]) => {
+  const c = getCfg();
+  const p = c.providers[name];
+  if (!p) return fail(res, 404, "not_found_error", `No provider "${name}"`);
+  if (p.disabled) return fail(res, 400, "invalid_request_error", `Provider "${name}" is disabled`);
+  try {
+    const models = await listUpstreamModels(name, p);
+    sendJSON(res, 200, { provider: name, models });
+  } catch (e) {
+    fail(res, 502, "api_error", `Model discovery failed for "${name}": ${(e as Error).message}`);
+  }
 });
 
 on("PUT", /^\/admin\/providers\/([^/]+)$/, async (req, res, [name]) => {

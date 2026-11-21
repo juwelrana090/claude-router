@@ -18,7 +18,7 @@ import { budgetReason, fitToWindow, shrinkWorthy } from "./capacity";
 import { classifyFailure } from "./failure";
 import { adaptOpenAI, openaiHeaders, toOpenAIRequest } from "./openai";
 import { getSetting } from "./db";
-import { buildBody, buildHeaders, keyOrder, resolveModel } from "./routing";
+import { buildBody, buildHeaders, directModel, keyOrder, resolveModel } from "./routing";
 
 if (!ROUTER_KEY) {
   console.error("ROUTER_KEY is missing in .env - refusing to start without auth.");
@@ -266,13 +266,38 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   }
   const alias = resolved.alias;
 
+  // Model cfgs for this request: configured aliases, plus the one-off cfg of a "provider/model-id"
+  // direct route (resolveModel guarantees the alias is one of the two).
+  const models: Record<string, ModelCfg> = { ...c.models };
+  if (!models[alias]) {
+    const direct = directModel(c, alias);
+    if (direct) models[alias] = direct;
+  }
+
+  // Capability flags: refuse up front with a clear 400 when the chosen model says it cannot do
+  // what the request needs. Absent flags (and direct routes) assume "supported", so existing
+  // configs and bridges keep working unchanged.
+  const cap = models[alias].capabilities;
+  if (cap) {
+    if (cap.tools === false && Array.isArray(body.tools) && body.tools.length) {
+      return fail(res, 400, "invalid_request_error",
+        `Model "${alias}" does not support tools (capabilities.tools is false). Send the request without tools or pick another model.`);
+    }
+    if (cap.vision === false && Array.isArray(body.messages) &&
+      body.messages.some((m) => Array.isArray((m as { content?: unknown })?.content) &&
+        (m as { content: unknown[] }).content.some((b) => (b as { type?: unknown })?.type === "image"))) {
+      return fail(res, 400, "invalid_request_error",
+        `Model "${alias}" does not support images (capabilities.vision is false). Send the request without images or pick another model.`);
+    }
+  }
+
   const meta = body.metadata as { user_id?: string } | undefined;
   const seed = String(meta?.user_id ?? JSON.stringify(body.system ?? "").slice(0, 4000));
   const sessionId = "u-" + crypto.createHash("sha1").update(seed).digest("hex").slice(0, 12);
   // "off" = the model you picked answers or you see its real error; "auto" = move down the fallback list.
   const failoverOn = (getSetting("routing.failover") as string) !== "off";
   const retries = Number(getSetting("routing.retries"));
-  const chain = (failoverOn ? [alias, ...(c.models[alias].fallback ?? [])] : [alias]).filter((n) => c.models[n]);
+  const chain = (failoverOn ? [alias, ...(models[alias].fallback ?? [])] : [alias]).filter((n) => models[n]);
   const trace: live.TraceStep[] = [];
   const addTrace = (t: live.TraceStep): void => { if (trace.length < 14) trace.push(t); };
   const summary = (): string =>
@@ -282,7 +307,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
 
   // Context guard: clear OLD tool outputs (remembered per session) before the prompt goes upstream.
   // Shrinking only pays off where tokens are what you spend (see shrinkWorthy); on a cache-priced model it is skipped.
-  const shrink = shrinkWorthy(c.models[alias], c.providers[c.models[alias].provider]);
+  const shrink = shrinkWorthy(models[alias], c.providers[models[alias].provider]);
   const skipped = { mode: "off" as const, beforeTokens: 0, afterTokens: 0, saved: 0, would: 0, clearedNow: 0, clearedTotal: 0 };
   const guard = shrink ? applyGuard(body, sessionId) : { body, result: skipped };
   // Router memory: replace the old part of a long conversation by the stored summary (written in the background).
@@ -303,7 +328,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   // and the terminal eta event is emitted exactly once, after the last route.
   let track: live.InFlight | undefined;
   const begin = (routeName: string, keyName: string): live.InFlight => {
-    const m = c.models[routeName];
+    const m = models[routeName];
     const t = live.startRequest({
       alias: routeName,
       provider: m.provider,
@@ -333,7 +358,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
     ac.signal.addEventListener("abort", () => { clearTimeout(t); r(); }, { once: true });
   });
   const aborted = (routeName: string, keyName: string): void => {
-    const m = c.models[routeName];
+    const m = models[routeName];
     live.finishRequest(track!.id, {
       alias: routeName, provider: m.provider, model: m.model, key: keyName, status: 499,
       ms: Date.now() - started, ...ZERO(), cost: 0, sessionId,
@@ -341,7 +366,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   };
 
   for (const routeName of chain) {
-    const m = c.models[routeName];
+    const m = models[routeName];
     const p: ProviderCfg | undefined = c.providers[m.provider];
     if (!p || p.disabled) {
       addTrace({ route: routeName, outcome: "skipped", detail: p ? `provider ${m.provider} is disabled` : `provider ${m.provider} does not exist` });
@@ -442,7 +467,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
   const why = summary() || "no route could be tried";
   const note = failoverOn ? "" : " Failover is off (Settings > Routing).";
   if (!track) {
-    const first = c.models[chain[0] ?? alias];
+    const first = models[chain[0] ?? alias];
     track = begin(chain[0] ?? alias, first?.key ?? "-");
     lastStatus = 503;
   }

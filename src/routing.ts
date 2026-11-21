@@ -9,11 +9,22 @@ export function headerValue(v: string | string[] | undefined): string | undefine
 export type ResolvedVia = "exact" | "alias" | "default";
 
 /** How a client-sent model name became a router alias, and why (shown in History). */
+/** "provider/model-id" direct route: the part before the first "/" must be a configured provider (exact name).
+ *  Returns a one-off model cfg (no alias, no fallback chain) that uses the provider's whole key pool. */
+export function directModel(c: Config, raw: string): ModelCfg | undefined {
+  const i = raw.indexOf("/");
+  if (i <= 0) return undefined;
+  const provider = raw.slice(0, i);
+  const model = raw.slice(i + 1); // model ids may themselves contain "/" (e.g. openrouter ids)
+  return c.providers[provider] && model ? { provider, model } : undefined;
+}
+
 export function resolveModel(c: Config, raw: string): { alias: string; via: ResolvedVia } | undefined {
   const name = raw.replace(/\[[^\]]*\]$/, "").trim(); // "sonnet[1m]" -> "sonnet"
   if (c.models[name]) return { alias: name, via: "exact" };
   const lower = name.toLowerCase();
   if (c.models[lower]) return { alias: lower, via: "exact" }; // "GLM" -> "glm"
+  if (directModel(c, name)) return { alias: name, via: "exact" }; // "groq/llama-4-scout" -> groq + its own id
   for (const [needle, target] of Object.entries(c.aliases ?? {})) {
     if (lower.includes(needle) && c.models[target]) return { alias: target, via: "alias" };
   }
