@@ -1,156 +1,72 @@
 {
   "_note": "Edit freely - the router hot-reloads this file. VERIFY every 'model' string against the provider's current model list.",
-  "defaultModel": "glm",
+  "defaultModel": "groq-120b",
   "aliases": {
-    "opus": "ds-pro",
-    "sonnet": "glm",
-    "haiku": "ds-flash"
+    "opus": "or-free",
+    "sonnet": "groq-120b",
+    "haiku": "groq-fast"
   },
   "providers": {
-    "deepseek": {
-      "baseURL": "https://api.deepseek.com/anthropic",
-      "auth": "both",
-      "keys": [
-        "DEEPSEEK_KEY_1"
-      ]
-    },
-    "zai": {
-      "baseURL": "https://api.z.ai/api/anthropic",
-      "auth": "both",
-      "keys": [
-        "ZAI_KEY_1"
-      ]
-    },
-    "openrouter": {
+    "openrouter-free": {
       "baseURL": "https://openrouter.ai/api",
       "auth": "bearer",
       "keys": [
-        "OPENROUTER_KEY_1"
-      ]
+        "OPENROUTER_API_KEY"
+      ],
+      "dailyRequests": 50
     },
-    "opencode": {
-      "baseURL": "https://opencode.ai/zen",
-      "auth": "both",
+    "groq-free": {
+      "baseURL": "https://api.groq.com/openai/v1",
+      "auth": "bearer",
       "keys": [
-        "OPENCODE_ZEN_KEY_1",
-        "OPENCODE_ZEN_KEY_2",
-        "OPENCODE_ZEN_KEY_3",
-        "OPENCODE_ZEN_KEY_4"
-      ]
+        "GROQ_API_KEY"
+      ],
+      "protocol": "openai",
+      "dailyRequests": 1000
     },
-    "ollama": {
+    "ollama-cloud": {
       "baseURL": "https://ollama.com",
       "auth": "both",
       "keys": [
-        "OLLAMA_KEY_1"
+        "OLLAMA_CLOUD_API_KEY"
       ],
       "dropBeta": false,
       "dropBodyFields": [
         "ollama"
       ],
       "disabled": false
-    },
-    "commandcode": {
-      "baseURL": "https://api.commandcode.ai/provider/v1",
-      "auth": "bearer",
-      "keys": [
-        "COMMANDCODE_KEY_1",
-        "CC_01"
-      ],
-      "protocol": "openai"
-    },
-    "gemini": {
-      "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "auth": "bearer",
-      "keys": [
-        "GEMINI_KEY_1"
-      ],
-      "protocol": "openai"
-    },
-    "cliproxyapi": {
-      "baseURL": "http://127.0.0.1:8317",
-      "auth": "none",
-      "keys": []
     }
   },
   "models": {
-    "ds-pro": {
-      "provider": "deepseek",
-      "model": "deepseek-v4-pro",
-      "key": "DEEPSEEK_KEY_1",
-      "fallback": [
-        "glm",
-        "glm-fast",
-        "or-b",
-        "oc-haiku",
-        "oc-free",
-        "ds-flash"
-      ],
-      "price": {
-        "in": 0.66,
-        "out": 1.98,
-        "cacheRead": 0.022,
-        "peak": true
-      }
-    },
-    "ds-flash": {
-      "provider": "deepseek",
-      "model": "deepseek-v4-flash",
-      "key": "DEEPSEEK_KEY_1",
-      "price": {
-        "in": 0.15,
-        "out": 0.6,
-        "cacheRead": 0.003,
-        "peak": true
-      }
-    },
-    "glm": {
-      "provider": "zai",
-      "model": "glm-5.3",
-      "key": "ZAI_KEY_1",
-      "fallback": [
-        "ds-flash"
-      ]
-    },
-    "glm-fast": {
-      "provider": "zai",
-      "model": "glm-5.3-flash",
-      "key": "ZAI_KEY_1",
-      "fallback": [
-        "glm"
-      ]
-    },
-    "or-b": {
-      "provider": "openrouter",
+    "or-free": {
+      "provider": "openrouter-free",
       "model": "openrouter/free",
-      "key": "OPENROUTER_KEY_1",
+      "key": "OPENROUTER_API_KEY",
       "fallback": [
-        "glm-fast",
-        "ds-flash"
+        "ol-flash"
       ]
     },
-    "oc-haiku": {
-      "provider": "opencode",
-      "model": "big-pickle",
-      "key": "OPENCODE_ZEN_KEY_1"
+    "groq-120b": {
+      "provider": "groq-free",
+      "model": "openai/gpt-oss-120b",
+      "key": "GROQ_API_KEY",
+      "fallback": [
+        "or-free",
+        "ol-flash"
+      ]
     },
-    "oc-free": {
-      "provider": "opencode",
-      "model": "space-bunny-free",
-      "key": "OPENCODE_ZEN_KEY_1"
+    "groq-fast": {
+      "provider": "groq-free",
+      "model": "llama-3.1-8b-instant",
+      "key": "GROQ_API_KEY",
+      "fallback": [
+        "ol-flash"
+      ]
     },
-    "deepseek-v4.1-flash": {
-      "provider": "ollama",
+    "ol-flash": {
+      "provider": "ollama-cloud",
       "model": "deepseek-v4.1-flash",
-      "key": "OLLAMA_KEY_1"
-    },
-    "cc-sonnet": {
-      "provider": "commandcode",
-      "model": "stealth/space-bunny-alpha",
-      "key": "COMMANDCODE_KEY_1",
-      "fallback": [
-        "ds-flash"
-      ]
+      "key": "OLLAMA_CLOUD_API_KEY"
     }
   }
 }

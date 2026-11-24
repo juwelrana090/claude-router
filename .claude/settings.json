@@ -226,7 +226,8 @@
       "Bash(curl -s --max-time 15 \"https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest\")",
       "Bash(curl -s --max-time 15 \"https://api.github.com/repos/router-for-me/CLIProxyAPI/contents/cmd\")",
       "Bash(curl -s --max-time 15 \"https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/main/cmd/server/main.go\")",
-      "Bash(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest)"
+      "Bash(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest)",
+      "Bash(node \"c:/tmp/claude-router-env-cleanup.mjs\")"
     ],
     "deny": [
       "Write(~/**)",

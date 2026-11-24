@@ -24,17 +24,17 @@ function sections(lang: Lang): Section[] {
       { key: 'free', title: '২. ফ্রি আর পেইড: কী আশা করবে', body: (
         <ul>
           <li><b>নিজের কম্পিউটারে (Ollama local):</b> সত্যিই ফ্রি ও সীমাহীন, কিন্তু তোমার RAM/GPU যা পারে।</li>
-          <li><b>ফ্রি tier (Groq, Gemini, Cerebras, NVIDIA, Mistral, OpenRouter free):</b> দিনে বা মিনিটে সীমা আছে। সীমা ছাড়ালে provider "429" বলে। গোপনীয়তা: কিছু free tier তোমার prompt দিয়ে model উন্নত করতে পারে। গোপন কোড হলে ব্যবহার কোরো না।</li>
-          <li><b>ফ্রি শুরু, পরে টাকা (Ollama Cloud, OpenCode Zen):</b> শুরুতে কিছু ফ্রি ক্রেডিট ও ছোট কিছু model; সব model খুলতে ক্রেডিট কিনতে হয়।</li>
-          <li><b>কম দামি (DeepSeek, Z.ai, Kimi, MiniMax, Qwen):</b> প্রতি ১০ লাখ token-এ কয়েক ডলার বা তারও কম। কোডিং-এর জন্য সাধারণত সবচেয়ে কাজের।</li>
+          <li><b>ফ্রি tier (Groq, Cerebras, NVIDIA, Mistral, OpenRouter free):</b> দিনে বা মিনিটে সীমা আছে। সীমা ছাড়ালে provider "429" বলে। গোপনীয়তা: কিছু free tier তোমার prompt দিয়ে model উন্নত করতে পারে। গোপন কোড হলে ব্যবহার কোরো না।</li>
+          <li><b>ফ্রি শুরু, পরে টাকা (Ollama Cloud):</b> শুরুতে কিছু ফ্রি ক্রেডিট ও ছোট কিছু model; সব model খুলতে ক্রেডিট কিনতে হয়।</li>
+          <li><b>কম দামি (Kimi ইত্যাদি):</b> প্রতি ১০ লাখ token-এ কয়েক ডলার বা তারও কম। কোডিং-এর জন্য সাধারণত সবচেয়ে কাজের।</li>
           <li>ফ্রি তালিকা বদলায়। প্রতিটা কার্ডে লেখা থাকে কবে যাচাই হয়েছে; সংখ্যা ভরসা করার আগে provider-এর পেজে দেখো।</li>
         </ul>
       ) },
       { key: 'pick', title: '৩. কোনটা কখন', body: (
         <ul>
           <li>গোপন বা ক্লায়েন্টের কোড: নিজের কম্পিউটার বা এমন provider যারা training করে না বলে লেখে। ফ্রি tier এড়াও।</li>
-          <li>সাধারণ দৈনিক কাজ: একটা কম দামি model (যেমন DeepSeek Flash) + ফ্রি model fallback হিসেবে।</li>
-          <li>কঠিন সমস্যা: বড় model (Pro, GLM 5.3, Kimi Code) হাতে বেছে নাও, কাজ হলে আবার ছোটটায় ফেরো।</li>
+          <li>সাধারণ দৈনিক কাজ: একটা কম দামি model + ফ্রি model fallback হিসেবে।</li>
+          <li>কঠিন সমস্যা: বড় model (যেমন GPT-OSS 120B, Kimi Code) হাতে বেছে নাও, কাজ হলে আবার ছোটটায় ফেরো।</li>
         </ul>
       ) },
       { key: 'switch', title: '৪. নিজে নিজে বদলে যাওয়া (fallback)', body: (
@@ -75,17 +75,17 @@ function sections(lang: Lang): Section[] {
     { key: 'free', title: '2. Free vs paid: what to expect', body: (
       <ul>
         <li><b>On your own computer (Ollama local):</b> truly free and unlimited, as fast as your RAM or GPU allows.</li>
-        <li><b>Free tiers (Groq, Gemini, Cerebras, NVIDIA, Mistral, OpenRouter free):</b> limited per minute or per day. Past the limit the provider answers “429”. Privacy: some free tiers may use your prompts to improve their models, so keep private code away from them.</li>
-        <li><b>Free start, pay later (Ollama Cloud, OpenCode Zen):</b> some free credits and a small set of models; buying credits unlocks the rest.</li>
-        <li><b>Low price (DeepSeek, Z.ai, Kimi, MiniMax, Qwen):</b> a few dollars or less per million tokens, usually the best value for coding.</li>
+        <li><b>Free tiers (Groq, Cerebras, NVIDIA, Mistral, OpenRouter free):</b> limited per minute or per day. Past the limit the provider answers “429”. Privacy: some free tiers may use your prompts to improve their models, so keep private code away from them.</li>
+        <li><b>Free start, pay later (Ollama Cloud):</b> some free credits and a small set of models; buying credits unlocks the rest.</li>
+        <li><b>Low price (Kimi and other budget providers):</b> a few dollars or less per million tokens, usually the best value for coding.</li>
         <li>Free lists change. Each card shows when it was checked; confirm numbers on the provider's page before you rely on them.</li>
       </ul>
     ) },
     { key: 'pick', title: '3. Which one when', body: (
       <ul>
         <li>Private or client code: your own computer, or a provider that states it does not train on your data. Avoid free tiers.</li>
-        <li>Everyday work: a low-price model (for example DeepSeek Flash) with a free model as fallback.</li>
-        <li>Hard problems: pick a big model by hand (Pro, GLM 5.3, Kimi Code), then go back to the small one.</li>
+        <li>Everyday work: a low-price model with a free model as fallback.</li>
+        <li>Hard problems: pick a big model by hand (for example GPT-OSS 120B, Kimi Code), then go back to the small one.</li>
       </ul>
     ) },
     { key: 'switch', title: '4. Automatic switching (fallbacks)', body: (

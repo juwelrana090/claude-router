@@ -211,22 +211,17 @@ aj = await pr.json();
 t("Ollama on your computer: no key needed, created with auth none", pr.status === 201 && aj.provider.keyless === true && aj.warning === null, JSON.stringify({ s: pr.status, k: aj.provider?.keyless }));
 pr = await admin("/admin/catalog/add", { method: "POST", body: JSON.stringify({ version: await version(), id: "nope", models: ["x"] }) });
 t("unknown catalog entry -> 404", pr.status === 404);
-pr = await admin("/admin/catalog/add", { method: "POST", body: JSON.stringify({ version: await version(), id: "gemini", models: [] }) });
+pr = await admin("/admin/catalog/add", { method: "POST", body: JSON.stringify({ version: await version(), id: "cerebras", models: [] }) });
 t("no model chosen -> clear error", pr.status === 400 && /choose at least one model/.test(await pr.text()));
 const after = (await (await admin("/admin/models")).json()).models.map((m) => m.alias);
-// ---------- 7b. Command Code: the card, the address message, the hints
+// ---------- 7b. pasted full endpoint addresses and the plain-language hints
 {
-  const cc = cat.entries.find((e) => e.id === "commandcode");
-  const ccl = cat.entries.find((e) => e.id === "commandcode-claude");
-  t("Command Code card (open models) is OpenAI style on /provider/v1 with Bearer auth", cc && cc.protocol === "openai" && cc.baseURL === "https://api.commandcode.ai/provider/v1" && cc.auth === "bearer");
-  t("... it lists the docs-confirmed free model id and no Claude models (those are only served on /v1/messages)", cc.models.some((m) => m.id === "stealth/space-bunny-alpha" && m.free) && cc.models.every((m) => !/^claude-/i.test(m.id)));
-  t("Command Code Claude card is Claude format on /provider and lists only Claude ids", ccl && ccl.protocol === "anthropic" && ccl.baseURL === "https://api.commandcode.ai/provider" && ccl.models.length > 0 && ccl.models.every((m) => /^claude-/.test(m.id)));
   const vv = await version();
-  const pe = await admin("/admin/providers/groq", { method: "PUT", body: JSON.stringify({ version: vv, baseURL: "https://api.commandcode.ai/provider/v1/chat/completions" }) });
+  const pe = await admin("/admin/providers/groq", { method: "PUT", body: JSON.stringify({ version: vv, baseURL: "https://api.groq.com/openai/v1/chat/completions" }) });
   const pet = await pe.text();
-  t("a pasted .../chat/completions address is refused and the message says what to type", pe.status === 400 && /https:\/\/api\.commandcode\.ai\/provider\/v1/.test(pet) && /OpenAI style/.test(pet), pet.slice(0, 200));
-  const pm = await admin("/admin/providers/anth", { method: "PUT", body: JSON.stringify({ version: vv, baseURL: "https://api.commandcode.ai/provider/v1/messages" }) });
-  t("a pasted .../v1/messages address is refused with the corrected address", pm.status === 400 && /use https:\/\/api\.commandcode\.ai\/provider /.test(await pm.text()));
+  t("a pasted .../chat/completions address is refused and the message says what to type", pe.status === 400 && /https:\/\/api\.groq\.com\/openai\/v1/.test(pet) && /OpenAI style/.test(pet), pet.slice(0, 200));
+  const pm = await admin("/admin/providers/anth", { method: "PUT", body: JSON.stringify({ version: vv, baseURL: "https://openrouter.ai/api/v1/messages" }) });
+  t("a pasted .../v1/messages address is refused with the corrected address", pm.status === 400 && /use https:\/\/openrouter\.ai\/api /.test(await pm.text()));
   let mv = await version();
   await admin("/admin/models", { method: "POST", body: JSON.stringify({ version: mv, alias: "wrongep", provider: "anth", model: "wrong-endpoint", key: "ANTH_KEY_1" }) });
   mv = await version();
@@ -236,7 +231,7 @@ const after = (await (await admin("/admin/models")).json()).models.map((m) => m.
   const hu = await (await admin("/admin/models/needsup/test", { method: "POST", body: JSON.stringify({ confirm: true }) })).json();
   t("test on a plan without API access: hint says the plan has no API access", hu.ok === false && /no API access/.test(hu.hint ?? ""), hu.hint?.slice(0, 80));
 }
-t("failed adds left nothing behind", !after.includes("x") && !(await (await admin("/admin/providers")).json()).providers.some((p) => p.name === "gemini"));
+t("failed adds left nothing behind", !after.includes("x") && !(await (await admin("/admin/providers")).json()).providers.some((p) => p.name === "cerebras"));
 
 // ---------- 8. a free OpenAI-style model can be the one that writes the memory summaries
 await admin("/admin/keys/GROQ_KEY_1/reset-cooldown", { method: "POST", body: "{}" });

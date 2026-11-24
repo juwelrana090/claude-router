@@ -2,7 +2,7 @@
 
 এই ফাইলটা প্রজেক্টের ভেতরেই থাকে। এখানে সব কিছু উদাহরণসহ বলা আছে: কীভাবে চালাবে, provider ও model যোগ করবে, প্রতিটা পেজ ও বাটনের কাজ কী, Claude Code-এর `env` কেন লাগে, আর কিছু ভুল হলে কীভাবে ধরবে।
 
-> **একটা সত্য আগে জেনে রাখো:** এই গাইডে যেসব সংখ্যা/নাম আছে (`glm`, `ds-flash`, `ZAI_KEY_1`) সেগুলো **উদাহরণ**। তোমার নিজের `routes.json` আর `.env`-এ যা আছে সেটাই আসল।
+> **একটা সত্য আগে জেনে রাখো:** এই গাইডে যেসব সংখ্যা/নাম আছে (`groq-120b`, `ol-flash`, `GROQ_API_KEY`) সেগুলো **উদাহরণ**। তোমার নিজের `routes.json` আর `.env`-এ যা আছে সেটাই আসল।
 
 ---
 
@@ -11,19 +11,19 @@
 Claude Code সাধারণত Anthropic-এর server-এ কথা বলে। এই প্রজেক্ট (router) তোমার কম্পিউটারে একটা ছোট server চালায়। তুমি Claude Code-কে বলো: "Anthropic-এর বদলে `http://127.0.0.1:21450`-এ কথা বলো।" তখন:
 
 ```
-Claude Code / VS Code  ──►  Router (তোমার PC)  ──►  DeepSeek / Z.ai / OpenRouter / OpenCode Zen / Ollama
+Claude Code / VS Code  ──►  Router (তোমার PC)  ──►  OpenRouter / Groq / Ollama Cloud / Ollama local
       মডেলের নাম বলে         নামটা দেখে ঠিক করে        আসল provider-এ পাঠায়
-      (যেমন "glm")           কোন provider, কোন key
+      (যেমন "groq-120b")     কোন provider, কোন key
 ```
 
 Router যা যা করে:
-1. **নাম মেলানো:** Claude Code যে model-এর নাম পাঠায় (`glm`, `ds-flash`, `sonnet`...) সেটা তোমার Models তালিকার সাথে মেলায়।
+1. **নাম মেলানো:** Claude Code যে model-এর নাম পাঠায় (`groq-120b`, `groq-fast`, `sonnet`...) সেটা তোমার Models তালিকার সাথে মেলায়।
 2. **Key বাছাই:** `.env` ফাইল থেকে সঠিক API key নিয়ে provider-এ পাঠায়।
 3. **Fallback:** provider ব্যর্থ হলে (balance শেষ, limit, server error) পরের model-এ চলে যায়। (এটা চাইলে বন্ধও করা যায়, ৯ নম্বর অংশ দেখো)
 4. **হিসাব রাখা:** প্রতিটা request-এর token, সময়, cost একটা ডাটাবেসে জমায় (`data/router.db`)।
 5. **Context guard:** পুরনো tool output ছেঁটে token বাঁচায় (৮ নম্বর অংশ)।
 
-**Provider** = কোম্পানি/সার্ভার (DeepSeek, Z.ai)। **Model (alias)** = তুমি যে ছোট নামে ডাকো (`glm`, `ds-flash`) আর সেটা কোন provider-এর কোন আসল model-এ যাবে।
+**Provider** = কোম্পানি/সার্ভার (OpenRouter, Groq, Ollama)। **Model (alias)** = তুমি যে ছোট নামে ডাকো (`groq-120b`, `groq-fast`) আর সেটা কোন provider-এর কোন আসল model-এ যাবে।
 
 ---
 
@@ -50,10 +50,9 @@ PM2 দিয়ে চালালে বদলের পর `pm2 restart <ন�
 ROUTER_PORT="21450"
 ROUTER_KEY="এখানে-লম্বা-random-একটা-মান"     # Claude Code এই মান দিয়ে router-এ ঢোকে
 
-DEEPSEEK_KEY_1="sk-..."
-ZAI_KEY_1="..."
-OPENROUTER_KEY_1="sk-or-..."
-OPENCODE_ZEN_KEY_1="..."
+OPENROUTER_API_KEY="sk-or-..."
+GROQ_API_KEY="..."
+OLLAMA_CLOUD_API_KEY="..."
 ```
 
 - `ROUTER_KEY`: Claude Code আর স্ক্রিপ্টের জন্য "পাসওয়ার্ড"। ছোট/সহজ রেখো না (যেমন `12345678Aa!!!` দুর্বল)। লম্বা random বানাও। একই মান Claude Code-এর `ANTHROPIC_AUTH_TOKEN`-এ বসবে।
@@ -72,14 +71,14 @@ OPENCODE_ZEN_KEY_1="..."
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:21450",
     "ANTHROPIC_AUTH_TOKEN": "<.env-এর ROUTER_KEY-এর হুবহু একই মান>",
 
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "ds-pro",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-fast",
-    "ANTHROPIC_SMALL_FAST_MODEL": "ds-flash",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "or-free",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "groq-120b",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "groq-fast",
+    "ANTHROPIC_SMALL_FAST_MODEL": "groq-fast",
 
-    "ANTHROPIC_CUSTOM_MODEL_OPTION": "or-b",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "or-b",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "OpenRouter free",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION": "ol-flash",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "ol-flash",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "Ollama Cloud flash",
 
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
@@ -97,32 +96,32 @@ OPENCODE_ZEN_KEY_1="..."
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | Claude Code কোথায় কথা বলবে | Anthropic-এর বদলে তোমার router-এ পাঠানোর জন্য |
 | `ANTHROPIC_AUTH_TOKEN` | router-এ ঢোকার পাসওয়ার্ড | `.env`-এর `ROUTER_KEY`-এর সাথে **হুবহু মিলতে হবে**, নইলে 401 |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Claude Code-এর "Opus" সারিতে কোন নাম যাবে | Picker-এ Opus বাছলে router `ds-pro` নাম পায় |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | "Sonnet" সারি | এখানে `glm` |
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | "Haiku" সারি | ছোট/দ্রুত কাজের জন্য `glm-fast` |
-| `ANTHROPIC_SMALL_FAST_MODEL` | Claude Code-এর নিজের ব্যাকগ্রাউন্ড কাজ (শিরোনাম, সারাংশ...) | সস্তা model দাও (`ds-flash`), যাতে বড় model খরচ না হয় |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Claude Code-এর "Opus" সারিতে কোন নাম যাবে | Picker-এ Opus বাছলে router `or-free` নাম পায় |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | "Sonnet" সারি | এখানে `groq-120b` |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | "Haiku" সারি | ছোট/দ্রুত কাজের জন্য `groq-fast` |
+| `ANTHROPIC_SMALL_FAST_MODEL` | Claude Code-এর নিজের ব্যাকগ্রাউন্ড কাজ (শিরোনাম, সারাংশ...) | সস্তা model দাও (`groq-fast`), যাতে বড় model খরচ না হয় |
 | `ANTHROPIC_CUSTOM_MODEL_OPTION` (+`_NAME`, `_DESCRIPTION`) | Picker-এ **একটা** বাড়তি সারি | নাম/বর্ণনা শুধু দেখানোর লেখা; আসলে যে model যায় সেটা `ANTHROPIC_CUSTOM_MODEL_OPTION`-এর মান |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | কথোপকথন কত বড় হলে Claude Code নিজে ছোট করবে | **token বাঁচানোর সবচেয়ে বড় সুইচ।** সংখ্যা লিখবে `120000`, `120k` না |
 | `CLAUDE_CODE_DISABLE_1M_CONTEXT` | "১০ লক্ষ token" মোড বন্ধ | নইলে Claude Code ভাবতে পারে জানালা বিশাল, তাই ছোট করতে দেরি করে |
 | `API_TIMEOUT_MS` | কতক্ষণ অপেক্ষা করবে | ধীর provider-এর জন্য বড় রাখা |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | অপ্রয়োজনীয় ইন্টারনেট যোগাযোগ বন্ধ | router ব্যবহার করলে দরকার নেই |
-| `"model": "sonnet"` (env-এর বাইরে) | শুরুতে কোন model | এখানে `sonnet` = উপরের `ANTHROPIC_DEFAULT_SONNET_MODEL` = `glm` |
+| `"model": "sonnet"` (env-এর বাইরে) | শুরুতে কোন model | এখানে `sonnet` = উপরের `ANTHROPIC_DEFAULT_SONNET_MODEL` = `groq-120b` |
 
 ### Model বদলানো: VS Code আর Terminal, দুই জায়গায়
 
 **Terminal (CLI):**
 ```
-/model glm           # যেকোনো alias-এর নাম লিখে সরাসরি
-/model ds-flash
-/model or-b
-claude --model oc-free      # শুরু থেকেই
+/model groq-120b     # যেকোনো alias-এর নাম লিখে সরাসরি
+/model groq-fast
+/model ol-flash
+claude --model or-free      # শুরু থেকেই
 ```
-Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সারি দেখায়। বাকিগুলো (`ds-flash`, `oc-free`...) নাম লিখে বাছতে হয়। নামে বানান ভুল হলে router ভুলে না গিয়ে **default model-এ পাঠায়** (তাই ভুল বানান = অন্য model চলবে)। History-তে "Client asked for" দেখে ধরা যায় (৭ নম্বর)।
+Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সারি দেখায়। বাকিগুলো (`groq-fast`, `or-free`...) নাম লিখে বাছতে হয়। নামে বানান ভুল হলে router ভুলে না গিয়ে **default model-এ পাঠায়** (তাই ভুল বানান = অন্য model চলবে)। History-তে "Client asked for" দেখে ধরা যায় (৭ নম্বর)।
 
 **VS Code extension:**
 - Sidebar-এর model বাছাই আর `/model` দুটোই কাজ করার কথা।
 - **সাবধান:** GitHub-এ Anthropic-এর নিজের একটা রিপোর্ট আছে (issue #66100, extension 2.1.168): VS Code-এর নিজস্ব সেটিং `claudeCode.environmentVariables`-এর ভেতরে `ANTHROPIC_MODEL` থাকলে extension-এর `/model` **আর কাজ করে না**, ওই মানেই আটকে থাকে। Terminal-এ ঠিক থাকে। এটাই "VS Code-এ বদলাচ্ছে না, CLI-তে বদলাচ্ছে" লক্ষণের একটা পরিচিত কারণ।
-- **নিয়ম:** (ক) `ANTHROPIC_MODEL` কোথাও রেখো না (না VS Code সেটিংসে, না `settings.json`-এ)। (খ) সব `env` শুধু `~/.claude/settings.json`-এ রাখো; VS Code-এর `claudeCode.environmentVariables` খালি রাখো। (গ) VS Code-এর `claudeCode.selectedModel` আর `settings.json`-এর `model` দুটোই আছে; কোনটা জেতে তা Anthropic-এর ডকুমেন্টে পরিষ্কার না। তাই দুটো একই রাখো (দুটোই `sonnet`, বা দুটোই `glm`)।
+- **নিয়ম:** (ক) `ANTHROPIC_MODEL` কোথাও রেখো না (না VS Code সেটিংসে, না `settings.json`-এ)। (খ) সব `env` শুধু `~/.claude/settings.json`-এ রাখো; VS Code-এর `claudeCode.environmentVariables` খালি রাখো। (গ) VS Code-এর `claudeCode.selectedModel` আর `settings.json`-এর `model` দুটোই আছে; কোনটা জেতে তা Anthropic-এর ডকুমেন্টে পরিষ্কার না। তাই দুটো একই রাখো (দুটোই `sonnet`, বা দুটোই `groq-120b`)।
 - সেটিং বদলে VS Code পুরোপুরি বন্ধ করে আবার খোলো (Reload Window-ও চলবে)।
 - **আমি VS Code extension নিজে চালিয়ে দেখিনি।** যা নিশ্চিত: router সবসময় লিখে রাখে Claude Code কী নাম পাঠিয়েছিল (History → Details → "Client asked for")। সেটা দেখলেই বোঝা যায় দোষটা VS Code-এর পাঠানো নামে, নাকি router-এর provider ব্যর্থতায়।
 
@@ -139,7 +138,7 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 - **Throughput** গ্রাফ: গত ১৫ মিনিটের গতি।
 - **Context size:** তোমার prompt সাধারণত কত বড় (`p50`), বড়গুলো কত (`p90`), সবচেয়ে বড়, আর কতবার ছোট হয়েছে (Compactions)। বেশিরভাগ request সীমা ছাড়ালে হলুদ সতর্কতা।
 - **Running requests:** এই মুহূর্তে যেগুলো চলছে।
-- **Recent requests:** সাম্প্রতিক request। লাল **"asked glm"** ট্যাগ মানে: তুমি `glm` চেয়েছিলে কিন্তু অন্য model উত্তর দিয়েছে। ট্যাগে মাউস ধরলে কারণ দেখায়।
+- **Recent requests:** সাম্প্রতিক request। লাল **"asked groq-120b"** ট্যাগ মানে: তুমি `groq-120b` চেয়েছিলে কিন্তু অন্য model উত্তর দিয়েছে। ট্যাগে মাউস ধরলে কারণ দেখায়।
 
 ### History (`/ui/history`)
 প্রতিটা request-এর স্থায়ী তালিকা (router restart করলেও থাকে)।
@@ -204,7 +203,7 @@ Picker-এ শুধু Opus/Sonnet/Haiku আর **একটা** custom সা�
 নিজের হাতে বানানোর নিয়ম (নিচে ক) শুধু তালিকায় নেই এমন provider-এর জন্য।
 
 ### প্রোটোকল: "Anthropic style" বনাম "OpenAI style"
-Claude Code Claude-এর নিজের ভাষায় কথা বলে। বেশিরভাগ কোডিং provider-এর একটা ঠিকানা আছে যেটা সেই ভাষা বোঝে (DeepSeek, Z.ai, Kimi, MiniMax, Qwen, OpenRouter, OpenCode Zen, Ollama)। কিছু ফ্রি provider শুধু **OpenAI ভাষা** জানে (Groq, Google Gemini, Cerebras, NVIDIA NIM, Mistral)। Providers → Add/Edit-এ **"Provider speaks"** থেকে বাছো। **OpenAI style** বাছলে router নিজে অনুবাদ করে: তোমার লেখা, tool call, tool-এর ফল, ছবি ও স্ট্রিমিং সব ঠিকঠাক যায়। (Claude-এর `thinking` আর cache-চিহ্ন বাদ যায়।) Base URL-এ OpenAI style হলে শেষে `/v1` থাকে (যেমন `https://api.groq.com/openai/v1`), Claude style হলে **থাকে না**, আর কোনো ক্ষেত্রেই `/v1/messages` বা `/chat/completions` লিখবে না (router নিজে জুড়ে নেয়)। ভুল ঠিকানা দিলে save-এর সময়ই কারণসহ আটকে দেয়।
+Claude Code Claude-এর নিজের ভাষায় কথা বলে। বেশিরভাগ কোডিং provider-এর একটা ঠিকানা আছে যেটা সেই ভাষা বোঝে (OpenRouter, Kimi, MiniMax, Qwen, Ollama)। কিছু ফ্রি provider শুধু **OpenAI ভাষা** জানে (Groq, Cerebras, NVIDIA NIM, Mistral)। Providers → Add/Edit-এ **"Provider speaks"** থেকে বাছো। **OpenAI style** বাছলে router নিজে অনুবাদ করে: তোমার লেখা, tool call, tool-এর ফল, ছবি ও স্ট্রিমিং সব ঠিকঠাক যায়। (Claude-এর `thinking` আর cache-চিহ্ন বাদ যায়।) Base URL-এ OpenAI style হলে শেষে `/v1` থাকে (যেমন `https://api.groq.com/openai/v1`), Claude style হলে **থাকে না**, আর কোনো ক্ষেত্রেই `/v1/messages` বা `/chat/completions` লিখবে না (router নিজে জুড়ে নেয়)। ভুল ঠিকানা দিলে save-এর সময়ই কারণসহ আটকে দেয়।
 
 ### Ollama: "404 path /api/v1/messages not found" কেন আর কী করবে
 - কারণ: Base URL `https://ollama.com/api` দেওয়া ছিল। router শেষে `/v1/messages` জুড়ে `https://ollama.com/api/v1/messages` ডাকে; ওটা নেই। `/api` শুধু Ollama-র নিজের ভাষার জন্য।
@@ -218,25 +217,12 @@ Claude Code Claude-এর নিজের ভাষায় কথা বলে
 | ফ্রি, নিজের কম্পিউটারে | Ollama local | Claude | সীমাহীন; তোমার RAM/GPU যতটা পারে |
 | ফ্রি শুরু | Ollama Cloud | Claude | ফ্রি starter ক্রেডিট, ১ request একসাথে; পরে pay-as-you-go |
 | ফ্রি শুরু | OpenRouter (`:free` model) | Claude | ২০ req/মিনিট; ৫০ req/দিন ($10 কিনলে ১০০০/দিন) |
-| ফ্রি শুরু | OpenCode Zen | Claude | কিছু model ফ্রি; key পেতে billing লাগে |
 | ফ্রি tier | Groq | OpenAI | ৩০ req/মিনিট; দিনে ১০০০ থেকে ১৪,৪০০ (model ভেদে) |
 | ফ্রি tier | Cerebras | OpenAI | ~১০ লাখ token/দিন; model তালিকা ঘনঘন বদলায় |
-| ফ্রি tier | Google Gemini | OpenAI | per-project সীমা; ফ্রিতে Google prompt ব্যবহার করতে পারে (EU/UK/EEA বাদে) |
 | ফ্রি tier | NVIDIA NIM | OpenAI | ~৪০ req/মিনিট, ফোন যাচাই |
 | ফ্রি tier | Mistral | OpenAI | Experiment tier-এ training-এ সম্মতি লাগে |
-| কম দামি | DeepSeek | Claude | Flash ≈ $0.15 in / $0.60 out (off-peak); cache-hit অনেক সস্তা |
-| কম দামি | Z.ai GLM, Kimi, MiniMax, Qwen | Claude | কম দাম; Z.ai-র Flash-এ ফ্রি tier থাকার খবর (যাচাই করে নাও) |
 Ollama Cloud-এর দাম (প্রতি ১০ লাখ token, in/out): DeepSeek V4.1 Flash $0.30/$1.20 (সপ্তাহের দিনে ১২:০০-১৮:০০ UTC-র বাইরে অর্ধেক), GLM 5.3 Flash $0.15/$0.50, GPT-OSS 120B $0.15/$0.60, Kimi K2.7 Code $0.95/$4.00, GLM 5.3 $1.40/$4.40।
 **সতর্কতা:** ফ্রি tier-এ প্রায়ই তোমার prompt provider-এর কাজে লাগে; গোপন কোড দিও না। সীমা ও দাম যেকোনো দিন বদলায়: কার্ডের "Checked" তারিখ দেখো, আর provider-ের পেজ মিলিয়ে নাও।
-
-### Command Code: কেন কাজ করেনি, আর ঠিক সেটিং
-- **Command Code-এর নিয়ম (তাদের ডকুমেন্টেশন):** Base `https://api.commandcode.ai/provider/v1`, Auth `Authorization: Bearer <key>`। **Claude model শুধু `/v1/messages`-এ** (Claude-ভাষা)। **বাকি সব model (DeepSeek, GLM, Kimi, Qwen, ফ্রি model...) `/v1/chat/completions`-এ** (OpenAI-ভাষা)। ভুল endpoint-এ পাঠালে 400।
-- **তোমার সেটিংয়ে দুটো ভুল ছিল:** (১) provider "Claude style" ছিল, তাই router `/provider/v1/messages` ডাকছিল, অথচ ফ্রি model Claude নয়; (২) model id `space-bunny-alpha-free` ভুল: ওটা ওয়েবপেজের লিংকের নাম। আসল id **`stealth/space-bunny-alpha`**।
-- **ঠিক সেটিং:** Providers → `commandcode` → Edit: **Provider speaks = OpenAI style**, **Base URL = `https://api.commandcode.ai/provider/v1`** (শেষে `/chat/completions` লিখবে না)। Model: `stealth/space-bunny-alpha`।
-- **Claude model চাইলে আলাদা provider:** Catalog → "Command Code (Claude models)" (Claude style, Base `https://api.commandcode.ai/provider`)। একই key আবার বসাতে হবে।
-- **আগে থেকে শর্ত:** API ব্যবহার করতে **Go প্ল্যান ছাড়া** যেকোনো প্ল্যান (GOAT, Pro, Max, Team) বা $15-এর Provider প্ল্যান লাগে; ফ্রি model চালাতে অ্যাকাউন্টে **$1 ক্রেডিট** থাকতে হয়। Go প্ল্যানে 403 `upgrade_required` আসে।
-- **সতর্কতা:** `stealth/space-bunny-alpha`-র provider prompt জমিয়ে রাখতে পারে (training-এ ব্যবহার করে না বলে) এবং এটা zero-data-retention-এ চলে না। গোপন কোড দিও না। `ling-3.1-flash:free` দিনে ৩০০ request, `ling-3.0-flash-sante:free` ১০০ request।
-- **ঠিকানা ভুল দিলে:** `.../chat/completions` বা `.../v1/messages` লিখলে save হবে না; বার্তায় বলে দেয় কী লিখতে হবে।
 
 ### ক) নতুন Provider যোগ করা (key সহ)
 উদাহরণ: OpenRouter।
@@ -250,8 +236,8 @@ Ollama Cloud-এর দাম (প্রতি ১০ লাখ token, in/out): 
 > Base URL-এর শেষে `/v1/messages` লিখবে না; router নিজেই যোগ করে। provider-এর "Anthropic-compatible" endpoint লাগে (তাদের ডকুমেন্টে খোঁজো)।
 
 ### খ) `.env`-এ আগে থেকে থাকা key যুক্ত করা
-তুমি `.env`-এ `OPENCODE_KEY_1..4` লিখে রেখেছ কিন্তু UI-তে একটা দেখাচ্ছে? কারণ: provider কেবল সেইসব নাম ব্যবহার করে যেগুলো তার তালিকায় আছে।
-1. Providers → `opencode` সারির **🔍 (Keys)**।
+তুমি `.env`-এ `MYPROVIDER_KEY_1..4` লিখে রেখেছ কিন্তু UI-তে একটা দেখাচ্ছে? কারণ: provider কেবল সেইসব নাম ব্যবহার করে যেগুলো তার তালিকায় আছে।
+1. Providers → ওই provider-এর সারিতে **🔍 (Keys)**।
 2. হলুদ বাক্সে "N keys found in .env but not used by this provider" দেখাবে।
 3. **Attach** (একটা) বা **Attach all**। কাজ শেষ।
 
@@ -262,15 +248,15 @@ Ollama Cloud-এর দাম (প্রতি ১০ লাখ token, in/out): 
 
 ### ঘ) নতুন Model যোগ
 1. Models → **Add model**।
-2. **Alias:** `my-gpt` (ছোট হাতের, সংখ্যা, `-`)। **Provider:** ড্রপডাউন থেকে। **Upstream model id:** provider-এর আসল নাম, ঠিক যেভাবে তাদের ডকুমেন্টে আছে (যেমন `deepseek-v4-flash`)। **এটা ভুল হলে provider 400/404 দেবে।**
+2. **Alias:** `my-gpt` (ছোট হাতের, সংখ্যা, `-`)। **Provider:** ড্রপডাউন থেকে। **Upstream model id:** provider-এর আসল নাম, ঠিক যেভাবে তাদের ডকুমেন্টে আছে (যেমন `openai/gpt-oss-120b`)। **এটা ভুল হলে provider 400/404 দেবে।**
 3. **Key:** ফাঁকা রাখলে provider-এর সব key ঘুরে ব্যবহার হবে; একটা বাছলে শুধু ওটা।
 4. **Max output tokens:** না দিলে সীমা নেই। **Context window:** model-এর আসল আকার দিলে ভালো (ব্যাখ্যা নিচে ৫(ট))।
 5. **Fallback chain:** ব্যর্থ হলে কোন কোন model, ক্রমানুসারে। (একটা model নিজেকে বা ঘুরে নিজেকে fallback দিতে পারে না; loop ধরা পড়লে error বলে।)
-6. **Price:** in / out / cache read (প্রতি ১০ লক্ষ token, USD)। DeepSeek-এর জন্য **peak** সুইচ।
+6. **Price:** in / out / cache read (প্রতি ১০ লক্ষ token, USD)। দিনের সময় ভেদে দাম বদলালে **peak** সুইচ আছে (যেমন Ollama Cloud-এর DeepSeek V4.1 Flash)।
 7. **Save** → সারির **⚡** চাপো। "OK" এলে ঠিক।
 
 ### ঙ-১) Model-এর ফর্ম থেকেই নতুন API key বসানো
-Models → **Add model** বা Edit → **Key** ঘরের নিচে **"Paste a new API key for this model"** চাপো। গোপন key বসাও; চাইলে `.env`-এর নাম দাও (ফাঁকা রাখলে নিজে `ZAI_KEY_2` ধরনের নাম বানাবে)। **Save** করলে একবারে তিনটা কাজ হয়: key `.env`-এ লেখা হয়, provider-এর তালিকায় যুক্ত হয়, আর এই model সেই key-তে আটকানো (pinned) হয়। key আর কখনো পুরোটা দেখায় না (শুধু শেষ ৪ অক্ষর)। কোনো কারণে save ব্যর্থ হলে কিছুই তৈরি হয় না। Key-বিহীন provider (Auth mode `none`)-এ এই লিংক আসে না, বদলে লেখা থাকে "needs no key"।
+Models → **Add model** বা Edit → **Key** ঘরের নিচে **"Paste a new API key for this model"** চাপো। গোপন key বসাও; চাইলে `.env`-এর নাম দাও (ফাঁকা রাখলে নিজে `MYPROVIDER_KEY_2` ধরনের নাম বানাবে)। **Save** করলে একবারে তিনটা কাজ হয়: key `.env`-এ লেখা হয়, provider-এর তালিকায় যুক্ত হয়, আর এই model সেই key-তে আটকানো (pinned) হয়। key আর কখনো পুরোটা দেখায় না (শুধু শেষ ৪ অক্ষর)। কোনো কারণে save ব্যর্থ হলে কিছুই তৈরি হয় না। Key-বিহীন provider (Auth mode `none`)-এ এই লিংক আসে না, বদলে লেখা থাকে "needs no key"।
 
 ### ঙ) Model মোছা
 Models → সারির **🗑**। অন্য model-এর fallback তালিকায় থাকলে dialog সতর্ক করবে।
@@ -282,11 +268,11 @@ Providers → **🗑**। তার model থাকলে dialog জানাব
 কিছু provider-এর দিনে request বা token সীমা আছে (যেমন OpenRouter-এর free model)। Providers → Edit → **Daily request limit** বা **Daily token budget** দাও (ফাঁকা = সীমা নেই)। আজকের সংখ্যা সীমায় পৌঁছালে router **provider-কে প্রশ্নই করে না**, সরাসরি fallback-এ যায়, আর History → Details-এ লেখা থাকে: `daily request limit reached (50 of 50 today)`। Token গণনা = নতুন input + cache read + cache write + output। শুধু সফল request গোনা হয়; রাত ১২টায় (router-এর ঘড়ি) আবার শূন্য। সীমা বাড়ালে বা খালি করলে সঙ্গে সঙ্গে আবার চালু। একসাথে অনেক request গেলে সামান্য বেশি যেতে পারে।
 
 ### ছ) Fallback সাজানো: উদাহরণ
-"glm সবসময় glm-এই চলুক, ব্যর্থ হলে চুপচাপ অন্যটায় যেও না": Models → `glm` → **Fallback chain** খালি করো, অথবা Settings → Routing → **Stop and show the error**।
-"glm ব্যর্থ হলে আগে glm-fast, তারপর ds-flash": `glm`-এর Fallback chain-এ ক্রমানুসারে `glm-fast`, `ds-flash`। (fallback এক স্তরের: `glm`-এর তালিকাই শুধু দেখা হয়, `glm-fast`-এর নিজের তালিকা আবার দেখা হয় না।)
+"groq-120b সবসময় groq-120b-এই চলুক, ব্যর্থ হলে চুপচাপ অন্যটায় যেও না": Models → `groq-120b` → **Fallback chain** খালি করো, অথবা Settings → Routing → **Stop and show the error**।
+"groq-120b ব্যর্থ হলে আগে groq-fast, তারপর ol-flash": `groq-120b`-এর Fallback chain-এ ক্রমানুসারে `groq-fast`, `ol-flash`। (fallback এক স্তরের: `groq-120b`-এর তালিকাই শুধু দেখা হয়, `groq-fast`-এর নিজের তালিকা আবার দেখা হয় না।)
 
 ### ট) Fallback model-এর context window ছোট হলে (token বাঁচানো ও নিরাপত্তা)
-ধরো `glm`-এ ১২০K token-এর কথোপকথন চলছে, আর glm ব্যর্থ হয়ে `or-b` (ছোট window)-এ যাচ্ছে। না সামলালে provider "prompt too long" বলে ফেরাত। তাই `or-b`-এর Edit-এ **Context window** দাও (যেমন `128000`)। তখন:
+ধরো `groq-120b`-এ ১২০K token-এর কথোপকথন চলছে, আর groq-120b ব্যর্থ হয়ে `or-free` (ছোট window)-এ যাচ্ছে। না সামলালে provider "prompt too long" বলে ফেরাত। তাই `or-free`-এর Edit-এ **Context window** দাও (যেমন `128000`)। তখন:
 1. prompt window-এর ৯০%-এর মধ্যে হলে কিছুই বদলায় না।
 2. বড় হলে router আগে **পুরনো tool output ছেঁটে** ফিটে আনে (শুধু এই route-এর জন্য; মূল model অপরিবর্তিত)। **কী ছেঁটেছে সেটা মনে রাখে**, তাই এই route-এ পরের request-এও একই লেখা যায় ও cache কাজ করে।
 3. তাতেও না ধরলে ওই route **এড়িয়ে** পরের fallback-এ যায়, আর History-তে কারণ লেখা থাকে।
@@ -300,22 +286,22 @@ Users → **Add user** → username, password, role। পরের জন `User
 
 ---
 
-## ৬. "glm বাছলাম, কিন্তু ds-flash চলল": কীভাবে ধরবে
+## ৬. "groq-120b বাছলাম, কিন্তু groq-fast চলল": কীভাবে ধরবে
 
-**আগে জেনে রাখো, router কী করে:** `glm` ব্যর্থ হলে (যেমন Z.ai-এর balance/limit-এর সমস্যা) router সেই key-কে কিছুক্ষণ **বিশ্রামে** পাঠায় (`resting`)। বিশ্রামের সময় `glm` **এড়িয়ে** সরাসরি fallback (`ds-flash`) চালায়। Claude Code উত্তর পায়, তাই কোনো error দেখায় না। আগে এই পুরো ব্যাপারটা কোথাও দেখানো হতো না।
+**আগে জেনে রাখো, router কী করে:** `groq-120b` ব্যর্থ হলে (যেমন provider-এর balance/limit-এর সমস্যা) router সেই key-কে কিছুক্ষণ **বিশ্রামে** পাঠায় (`resting`)। বিশ্রামের সময় `groq-120b` **এড়িয়ে** সরাসরি fallback (`groq-fast`) চালায়। Claude Code উত্তর পায়, তাই কোনো error দেখায় না। আগে এই পুরো ব্যাপারটা কোথাও দেখানো হতো না।
 
 ### ধাপ ১: আসল কারণ দেখো (৩০ সেকেন্ড)
-1. Models → `glm`-এর **⚡** চাপো। Z.ai-র আসল উত্তর দেখাবে (যেমন `HTTP 429 ... Insufficient balance` বা `403 ...`)। এটা পড়লেই বোঝা যায় সমস্যা Z.ai account-এ কি না (balance, plan, limit, ভুল model id)।
-2. History → সাম্প্রতিক সারিতে লাল **"asked glm"** ট্যাগ থাকলে **Details** খোলো। **Route taken**-এ `glm ... skipped/failed` লাইনে কারণ লেখা।
-3. Providers → `zai` → Keys → key "resting" ট্যাগে মাউস ধরো: শেষ error লেখা।
+1. Models → `groq-120b`-এর **⚡** চাপো। provider-এর আসল উত্তর দেখাবে (যেমন `HTTP 429 ... Insufficient balance` বা `403 ...`)। এটা পড়লেই বোঝা যায় সমস্যা provider account-এ কি না (balance, plan, limit, ভুল model id)।
+2. History → সাম্প্রতিক সারিতে লাল **"asked groq-120b"** ট্যাগ থাকলে **Details** খোলো। **Route taken**-এ `groq-120b ... skipped/failed` লাইনে কারণ লেখা।
+3. Providers → ওই provider → Keys → key "resting" ট্যাগে মাউস ধরো: শেষ error লেখা।
 
 ### ধাপ ২: কারণ অনুযায়ী সমাধান
 | History/Details-এ কী দেখছ | মানে | কী করবে |
 |---|---|---|
-| `Client asked for: ds-flash` (তুমি glm বেছেছিলে) | Claude Code-ই `ds-flash` নাম পাঠিয়েছে; router-এর দোষ না | ৩ নম্বর অংশ: VS Code-এ `ANTHROPIC_MODEL` আছে কি না, `claudeCode.selectedModel` আর `model` মেলে কি না, `ANTHROPIC_SMALL_FAST_MODEL` ভুল করে মূল model হয়েছে কি না দেখো |
-| `Client asked for: glm` + `asked glm` ট্যাগ + কারণে "balance/quota/plan" | Z.ai account সমস্যা | Z.ai-তে balance/plan ঠিক করো; ঠিক না হওয়া পর্যন্ত fallback চলবে |
+| `Client asked for: groq-fast` (তুমি groq-120b বেছেছিলে) | Claude Code-ই `groq-fast` নাম পাঠিয়েছে; router-এর দোষ না | ৩ নম্বর অংশ: VS Code-এ `ANTHROPIC_MODEL` আছে কি না, `claudeCode.selectedModel` আর `model` মেলে কি না, `ANTHROPIC_SMALL_FAST_MODEL` ভুল করে মূল model হয়েছে কি না দেখো |
+| `Client asked for: groq-120b` + `asked groq-120b` ট্যাগ + কারণে "balance/quota/plan" | provider account সমস্যা | provider dashboard-এ balance/plan ঠিক করো; ঠিক না হওয়া পর্যন্ত fallback চলবে |
 | কারণে "Rate limit" / 429 | একসাথে বেশি request | router নিজেই ২ বার তাৎক্ষণিক retry করে; বারবার হলে Settings → Routing-এ retry বাড়াও বা model/plan-এর limit দেখো |
-| কারণে "unknown model"/400/404 (Failover-এ যায় না) | `Upstream model id` ভুল | Models → `glm` → Edit → Upstream model id provider-এর ডকুমেন্টের সাথে মেলাও |
+| কারণে "unknown model"/400/404 (Failover-এ যায় না) | `Upstream model id` ভুল | Models → `groq-120b` → Edit → Upstream model id provider-এর ডকুমেন্টের সাথে মেলাও |
 | `resolvedVia: default` | অচেনা নাম পাঠানো হয়েছে, router default model-এ দিয়েছে | নামটা Models-এর কোনো alias-এর সাথে মেলাও বা `env`-এর নাম ঠিক করো |
 
 ### ধাপ ৩: তুমি কী চাও ঠিক করো
@@ -367,7 +353,7 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 
 **তাই ডিফল্ট এখন "Auto"** (Settings → Context guard → "Where to shrink prompts"): router শুধু সেখানে ছাঁটে যেখানে লাভ: (১) দৈনিক সীমা দেওয়া provider, (২) ছোট context window-এর model, (৩) দাম বসানো নেই এমন model (ফ্রি/অজানা ধরা হয়), (৪) cache-ছাড় নেই এমন model। যেসব model-এ cache ৫০%-এর বেশি সস্তা (যেমন দাম বসানো DeepSeek) সেগুলো ছোঁয়া হয় না। **তাই Settings → Pricing-এ দাম বসিয়ে রাখো।** সবখানে জোর করে চালাতে চাইলে "Every provider"।
 আরও একটা নিয়ম: আগে guard প্রায় প্রতি request-এ একটা একটা করে পুরনো result মুছে prompt-এর শুরু বদলাত (cache ভেঙে যেত)। এখন মোট যা মোছা যাবে সেটা (উঁচু-নিচু সীমার ফাঁকের অর্ধেকের) কম হলে কিছুই ছোঁয় না।
-**DeepSeek-এ টাকা বাঁচানোর আসল উপায়:** Claude Code-এ `CLAUDE_CODE_AUTO_COMPACT_WINDOW` কমানো (উপরে B), অন্য কাজে `/clear`, বড় ফাইল/লগ পুরোটা না পড়া (টুকরো করে পড়া), সস্তা model, আর **fallback-এ অন্য provider-এ যাওয়া কমানো** (প্রতিবার অন্য provider-এ গেলে সেখানকার cache শূন্য, পুরো prompt পুরো দামে)। নিজের provider-এর দামে মাপতে: `npm run bench:tokens`।
+**Cache-সস্তা provider-এ টাকা বাঁচানোর আসল উপায়:** Claude Code-এ `CLAUDE_CODE_AUTO_COMPACT_WINDOW` কমানো (উপরে B), অন্য কাজে `/clear`, বড় ফাইল/লগ পুরোটা না পড়া (টুকরো করে পড়া), সস্তা model, আর **fallback-এ অন্য provider-এ যাওয়া কমানো** (প্রতিবার অন্য provider-এ গেলে সেখানকার cache শূন্য, পুরো prompt পুরো দামে)। নিজের provider-এর দামে মাপতে: `npm run bench:tokens`।
 
 ### ৮(ক) আরও ছোট করার দুটো সুইচ (Settings → Context guard)
 - **Also shrink old tool calls** (ডিফল্ট চালু): পুরনো tool output ছাঁটার সময় ওই tool-এর **ডাকের** ভেতরের বড় লেখাও ছোট হয়। যেমন আগের `Write`-এ পুরো ফাইলের লেখা ছিল, এখন থাকে `[router: 9000 characters cleared ...]`; ফাইলের পথ ও বাকি ঘর থাকে।
@@ -378,7 +364,7 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 - **অপেক্ষা করতে হয় না:** যে request সীমা পার করে সেটা আগের মতোই যায়। সারাংশ **পেছনে** লেখা হয়, পরের request থেকে কাজে লাগে।
 - **নিরাপত্তা:** তোমার আসল প্রথম অনুরোধ হুবহু সারাংশের ভেতরে থাকে। সবচেয়ে নতুন মেসেজগুলো কখনো সারাংশ হয় না। কথোপকথনের শুরু বদলে গেলে (যেমন Claude Code নিজে `/compact` করলে) পুরনো সারাংশ আর লাগানো হয় না। সারাংশ-model ব্যর্থ হলে তোমার request অপরিবর্তিত যায়, আর router ৫ মিনিট পরে আবার চেষ্টা করে।
 - **খরচ ও ঝুঁকি:** প্রতিটা সারাংশে একবার ওই model-এর খরচ (History-তে "router memory summary" নামে দেখা যায়; কিছু লুকানো নেই), আর সারাংশ থেকে ছোটখাটো খুঁটিনাটি হারাতে পারে। তাই আগে **Measure only**।
-- **ধাপ:** Settings → Memory → **Model that writes the summaries** বাছো (সস্তা, দ্রুতটা, যেমন `ds-flash`) → **Mode: Measure only** → কয়েকদিন পর "Tokens it would remove" দেখো → ঠিক লাগলে **On**। "Start summarising above" (ডিফল্ট ৮০,০০০) ও "Aim to get down to" (৩৫,০০০) বদলানো যায়।
+- **ধাপ:** Settings → Memory → **Model that writes the summaries** বাছো (সস্তা, দ্রুতটা, যেমন `groq-fast`) → **Mode: Measure only** → কয়েকদিন পর "Tokens it would remove" দেখো → ঠিক লাগলে **On**। "Start summarising above" (ডিফল্ট ৮০,০০০) ও "Aim to get down to" (৩৫,০০০) বদলানো যায়।
 - **"What the router remembers now"** তালিকায় প্রতিটা কথোপকথনের সারাংশ আছে: **View** দিয়ে পড়তে পারো, **Forget** দিয়ে মুছলে পরের request-এ আবার পুরো কথোপকথন যায়।
 - **সীমা:** এটা এক কথোপকথনের ভেতরে কাজ করে। `/clear` দিলে নতুন কথোপকথন খালি শুরু হয় (এটাই ঠিক)। এক session থেকে আরেক session-এ স্মৃতি নিতে চাইলে প্রজেক্টের ফাইল (`CLAUDE.md`, `.claude/memory`, `/r-end`) ব্যবহার করো।
 
@@ -399,16 +385,16 @@ Model-এর নিজের **কোনো স্মৃতি নেই**। �
 | `Unknown model ...` | নাম `Models`-এ নেই (default model-ও নেই) | Models-এ alias যোগ করো বা নাম ঠিক করো |
 | Models-এ "0/1 ready" | ওই key `.env`-এ ফাঁকা/নেই | Keys → key দাও, বা `.env` ঠিক করো |
 | Provider "NO KEY" | key-ই দেওয়া হয়নি | Keys থেকে দাও; কেবল local হলে Auth mode `none` |
-| `ollama` model "0/0 ready" | Auth mode `both`, কিন্তু key নেই | Providers → ollama → Edit → Auth mode `none` |
+| Ollama Cloud model "0/0 ready" | key `.env`-এ ফাঁকা/নেই | Keys থেকে `OLLAMA_CLOUD_API_KEY` দাও (নিজের কম্পিউটারের Ollama হলে Auth mode `none`) |
 | `.env`-এ আছে কিন্তু UI-তে নেই | provider তালিকায় যুক্ত করা হয়নি | ৫(খ): Keys → Attach |
-| Provider-এর তালিকায় আছে কিন্তু `.env`-এ নেই (যেমন `ZAI_KEY_2`) | নিষ্ক্রিয় ঘর; model যদি নির্দিষ্ট key-এ আটকানো থাকে তাহলে কখনো ব্যবহার হয় না | দরকার না হলে ঠিক আছে; নইলে Keys-এ মান দাও |
+| Provider-এর তালিকায় আছে কিন্তু `.env`-এ নেই (যেমন `MYPROVIDER_KEY_2`) | নিষ্ক্রিয় ঘর; model যদি নির্দিষ্ট key-এ আটকানো থাকে তাহলে কখনো ব্যবহার হয় না | দরকার না হলে ঠিক আছে; নইলে Keys-এ মান দাও |
 | Claude Code-এ `Autocompact is thrashing` | বড় ফাইল/output বারবার context ভরিয়ে দিচ্ছে | বড় ফাইল টুকরো করে পড়ো; `/compact` বা `/clear`; Context guard `On` |
 | UI-তে বারবার login চাইছে | কুকি মুছছে (private window/অন্য domain) | `http://127.0.0.1:21450/ui` ঠিক এই ঠিকানায়, সাধারণ window-এ |
 | Live-এ গতি মিটার নড়ছে না | কোনো request চলছে না | Claude Code-এ কিছু চালাও |
 | Cost `$0.00` | model-এ দাম বসানো নেই | ৫(জ) |
 | Test-এ 404 "path not found" | Base URL ভুল (যেমন `https://ollama.com/api`) | ঠিকানা ঠিক করো: Ollama Cloud = `https://ollama.com`; শেষে `/v1/messages` বা ভুল `/api` নয় |
-| Test-এ 400 "Wrong endpoint for model" | Claude model OpenAI-style provider-এ, বা অন্য model Claude-style provider-এ | "Provider speaks" মেলাও; Command Code-এ Claude আলাদা provider |
-| Test-এ 403 `upgrade_required` | প্ল্যানে API নেই (Command Code Go) | প্ল্যান বদলাও বা অন্য provider |
+| Test-এ 400 "Wrong endpoint for model" | Claude model OpenAI-style provider-এ, বা অন্য model Claude-style provider-এ | "Provider speaks" মেলাও |
+| Test-এ 403 `upgrade_required` | প্ল্যানে API নেই | প্ল্যান বদলাও বা অন্য provider |
 | Test-এ 401/403 | key ভুল/মেয়াদ শেষ, বা Auth mode মেলেনি | key নতুন করে বসাও; Ollama Cloud-এ `bearer` বা `both` |
 | Test-এ 429/402 | ফ্রি কোটা/ব্যালেন্স শেষ, বা একসাথে বেশি request | provider-এর usage পেজ দেখো; অন্য model বা credit |
 | OpenAI-style provider-এ tool call/ছবি ঠিক নয় | সব provider সব ফিচার পারে না | সেই provider-এর model-এ কাজ না হলে Claude-format-এর model বাছো |

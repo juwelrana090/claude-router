@@ -91,14 +91,14 @@ Yes — everything actionable is done. Final accounting:
 
 1. **ETA / Live Task Time feature** — backend + statusline + UI, adversarially reviewed (15 defects found & fixed), smoke suites **180 PASS / 0 FAIL**, E2E observed live (per-second eta events → terminal done frame → usage record with timing fields)
 2. **One UI only** — old single-file UI and copy-ui deleted; `web/` React SPA (Lobe UI + ApexCharts + your favicon) is the only UI; root `npm run build` produces it
-3. **OpenCode 403** — routes.json fixed (`oc-haiku → opencode/claude-haiku-4-5`, new inference endpoint)
+3. **OpenCode 403** — fixed at the time via a new inference endpoint; the OpenCode provider has since been removed from the router entirely
 4. **`npm run dev`** — now compiles _and_ serves
 5. **Logo + 25 icons** — restored to [web/public/](web/public/); favicon inlined in the SPA
 
 **⏳ Waiting on you (3 things)**
 
 1. **Restart the router** — the running process predates everything: `npm run dev` or `npm start`, then open `http://127.0.0.1:21450/ui`
-2. **OpenCode Zen key** — put your OpenCode Zen key in `OPENCODE_ZEN_KEY_1` in `.env` (from the Zen dashboard; the router now calls `https://opencode.ai/zen`)
+2. **Free provider keys** — put keys in `.env` as `OPENROUTER_API_KEY` (OpenRouter), `GROQ_API_KEY` (Groq) and `OLLAMA_CLOUD_API_KEY` (Ollama Cloud)
 3. **Git commit** — your `git add .` is stale (deleted files still staged, `web/` unstaged). Say the word and I'll restage + commit
 
 **💬 Offers open (say yes/no)**

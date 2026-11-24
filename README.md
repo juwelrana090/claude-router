@@ -2,7 +2,7 @@
 
 # claude-router
 
-A local proxy that lets Claude Code route to DeepSeek, Z.AI, OpenRouter and OpenCode.
+A local proxy that lets Claude Code route to free providers (OpenRouter free models, Groq, Ollama Cloud).
 
 - **Proxy:** `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /health`
 - **Config:** `routes.json` (hot-reloaded) + `.env` (key values only)
@@ -73,7 +73,7 @@ build). No bundler, no framework, no CDN, no external requests.
 
 ## How key handling works
 
-- `routes.json` stores **env var names only** (`"keys": ["DEEPSEEK_KEY_1"]`). Key values
+- `routes.json` stores **env var names only** (`"keys": ["GROQ_API_KEY"]`). Key values
   live in `.env` and nowhere else.
 - The API and the UI **never return a key value**. They return `configured: true|false` and
   the last 4 characters. Adding or replacing a key writes the value to `.env` and applies it
@@ -157,10 +157,10 @@ Delete conflicts come back as `409` with exactly what blocks them:
 
 How a client-sent `model` name is resolved, in order:
 
-1. exact model alias (`glm`, `ds-pro`, …)
+1. exact model alias (`groq-120b`, `or-free`, …)
 2. **`provider/model-id` direct route** — anything before the first `/` must be a configured
    provider name (exact); the rest is the upstream model id (it may itself contain `/`,
-   e.g. `openrouter/deepseek/deepseek-chat`). A direct route uses that provider's whole key
+   e.g. `ollama-cloud/deepseek-v4.1-flash`). A direct route uses that provider's whole key
    pool, has no alias and no fallback chain, and is not stored anywhere.
 3. `opus` / `sonnet` / `haiku` alias substring
 4. `defaultModel`
