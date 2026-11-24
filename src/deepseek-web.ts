@@ -80,9 +80,17 @@ async function dsJson(path: string, init: RequestInit, signal: AbortSignal): Pro
 }
 
 /** Check the {code, data, msg} envelope every chat.deepseek.com endpoint returns. */
-async function checkDs(res: Response, keyName: string): Promise<Json> {
+/** Optional `shape` collects key NAMES and types only — never values — for error diagnostics. */
+async function checkDs(res: Response, keyName: string, shape?: { status: number; envelope: string; envelopeKeys: string[]; dataKeys: string[] }): Promise<Json> {
   let j: Json = null;
   try { j = JSON.parse(await res.text()); } catch { /* non-JSON body */ }
+  if (shape) {
+    shape.status = res.status;
+    shape.envelope = j === null ? "non-JSON body" : Array.isArray(j) ? "array" : typeof j;
+    shape.envelopeKeys = j && typeof j === "object" && !Array.isArray(j) ? Object.keys(j).slice(0, 12) : [];
+    const d = shape.envelopeKeys.includes("data") ? j.data : undefined;
+    shape.dataKeys = d === undefined || d === null ? [] : Array.isArray(d) ? ["array"] : typeof d === "object" ? Object.keys(d).slice(0, 12) : [typeof d];
+  }
   if (res.status >= 400) throw new DsBizError(res.status === 401 || res.status === 403 ? 401 : res.status, `DeepSeek web HTTP ${res.status}: ${typeof j?.msg === "string" ? j.msg : res.statusText}`);
   if (j && Number.isFinite(j.code)) {
     if (j.code === 0) return j.data;
@@ -129,8 +137,13 @@ async function createSession(token: string, signal: AbortSignal): Promise<string
     headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ character_id: null }),
   }, signal);
-  const id = (await checkDs(res, ""))?.biz_data?.id;
-  if (!id) throw new DsBizError(502, "DeepSeek web refused to create a chat session");
+  const shape = { status: 0, envelope: "", envelopeKeys: [] as string[], dataKeys: [] as string[] };
+  const data = await checkDs(res, "", shape);
+  const id = data?.biz_data?.id ?? data?.id ?? (typeof data === "string" ? data : undefined);
+  if (!id) {
+    const shapeTxt = `HTTP ${shape.status}, envelope ${shape.envelope}${shape.envelopeKeys.length ? ` {${shape.envelopeKeys.join(", ")}}` : ""}${shape.dataKeys.length ? `, data {${shape.dataKeys.join(", ")}}` : ""}`;
+    throw new DsBizError(502, `DeepSeek web refused to create a chat session (${shapeTxt})`);
+  }
   return String(id);
 }
 

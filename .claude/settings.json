@@ -250,7 +250,8 @@
       "Bash(node ds-abi-pin.mjs)",
       "Bash(node /c/tmp/ds-pow-probe.mjs)",
       "Bash(node /c/tmp/ds-smoke.mjs)",
-      "Bash(node /c/tmp/ds-parse-test.mjs)"
+      "Bash(node /c/tmp/ds-parse-test.mjs)",
+      "Bash(node c:/tmp/ds-smoke.mjs)"
     ],
     "deny": [
       "Write(~/**)",
