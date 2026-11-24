@@ -95,7 +95,7 @@ import { fmtCompact } from '../format';
 // ---------- Accurate admin view types (server shapes) ----------
 
 export type AuthMode = 'bearer' | 'x-api-key' | 'both' | 'none';
-export type Protocol = 'anthropic' | 'openai';
+export type Protocol = 'anthropic' | 'openai' | 'deepseek-web';
 
 export interface AdminKeyView {
   envName: string;
@@ -571,22 +571,27 @@ function ProviderFormModal({
             <Input placeholder="openrouter" autoComplete="off" />
           </Form.Item>
         )}
-        <Form.Item name="protocol" label="Provider speaks" tooltip="Most coding providers have an address that speaks Claude's own format (Anthropic style). Some free ones (Groq, Gemini, Cerebras, NVIDIA, Mistral) only speak the OpenAI chat format: choose OpenAI style and the router converts everything, including tool calls and streaming.">
-          <Select options={[{ value: 'anthropic', label: 'Anthropic style (Claude format)' }, { value: 'openai', label: 'OpenAI style (chat completions), converted by the router' }]} />
+        <Form.Item name="protocol" label="Provider speaks" tooltip="Most coding providers have an address that speaks Claude's own format (Anthropic style). Some free ones (Groq, Gemini, Cerebras, NVIDIA, Mistral) only speak the OpenAI chat format: choose OpenAI style and the router converts everything, including tool calls and streaming. DeepSeek web drives your chat.deepseek.com account directly - paste its browser userToken as the key.">
+          <Select options={[{ value: 'anthropic', label: 'Anthropic style (Claude format)' }, { value: 'openai', label: 'OpenAI style (chat completions), converted by the router' }, { value: 'deepseek-web', label: 'DeepSeek web (chat.deepseek.com account), driven by the router' }]} />
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(a, b) => a.protocol !== b.protocol}>
-          {({ getFieldValue }) => (
+          {({ getFieldValue }) => {
+            const proto = getFieldValue('protocol');
+            return (
             <Form.Item
               name="baseURL"
               label="Base URL"
-              extra={getFieldValue('protocol') === 'openai'
+              extra={proto === 'openai'
                 ? 'Ends where /chat/completions starts, for example https://api.groq.com/openai/v1. The router adds /chat/completions.'
+                : proto === 'deepseek-web'
+                ? 'Must be exactly https://chat.deepseek.com - the router talks to the web app endpoints itself.'
                 : 'Do not add /v1/messages: the router adds it. Ollama cloud is https://ollama.com (no /api); Ollama on your computer is http://localhost:11434.'}
               rules={[{ required: true, message: 'required (https, or http for localhost)' }]}
             >
-              <Input placeholder={getFieldValue('protocol') === 'openai' ? 'https://api.example.com/v1' : 'https://api.example.com'} autoComplete="off" />
+              <Input placeholder={proto === 'openai' ? 'https://api.example.com/v1' : proto === 'deepseek-web' ? 'https://chat.deepseek.com' : 'https://api.example.com'} autoComplete="off" />
             </Form.Item>
-          )}
+            );
+          }}
         </Form.Item>
         <Form.Item name="auth" label="Auth mode" rules={[{ required: true }]}>
           <Select options={AUTH_MODE_OPTIONS} />
@@ -993,6 +998,11 @@ function ProvidersInner() {
           {p.protocol === 'openai' && (
             <Tooltip title="This provider speaks the OpenAI chat format. The router converts requests and answers for you.">
               <Tag color="blue">OpenAI style</Tag>
+            </Tooltip>
+          )}
+          {p.protocol === 'deepseek-web' && (
+            <Tooltip title="This provider drives your chat.deepseek.com web account directly (userToken from the browser, proof-of-work, streaming).">
+              <Tag color="blue">DeepSeek web</Tag>
             </Tooltip>
           )}
         </span>

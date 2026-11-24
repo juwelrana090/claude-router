@@ -37,6 +37,22 @@ export interface CatalogEntry {
 
 export const CATALOG: CatalogEntry[] = [
   {
+    id: "deepseek-web", name: "DeepSeek (web account)", tier: "free", protocol: "deepseek-web",
+    baseURL: "https://chat.deepseek.com", auth: "bearer",
+    summary: "Your free chat.deepseek.com account as an API: the router drives the web app's own protocol (login token, proof-of-work, streaming) directly - no third-party service.",
+    limits: "Same limits as the web chat itself; the web account is rate-limited when you send too fast.",
+    steps: ["Log in at chat.deepseek.com in your browser.", "Open DevTools > Application > Local Storage > https://chat.deepseek.com and copy the value named userToken.", "Paste it as the key (DS_WEB_USER_TOKEN). It is refreshed by the router for about an hour at a time.", "Models: deepseek-v4-flash; add -think for reasoning and -search for web search."],
+    models: [
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", coding: true, free: true },
+      { id: "deepseek-v4-flash-think", label: "DeepSeek V4 Flash (thinking)", coding: true, free: true },
+      { id: "deepseek-v4-flash-search", label: "DeepSeek V4 Flash (web search)", free: true },
+      { id: "deepseek-r1", label: "DeepSeek R1 (thinking)", coding: true, free: true },
+    ],
+    customModelHint: "Any id from the web app's family: deepseek-chat, deepseek-r1, deepseek-v4-flash/pro plus -think/-search.",
+    suggestedLimits: { dailyRequests: 200 },
+    verified: "2026-11-24: flow reverse-engineered from the chat.deepseek.com web app itself (endpoints, PoW, SSE)",
+  },
+  {
     id: "ollama-local", name: "Ollama (on your computer)", tier: "local", protocol: "anthropic",
     baseURL: "http://localhost:11434", auth: "none", pricingUrl: "https://ollama.com/pricing",
     summary: "Runs on your own machine: free, private, no limits except your hardware.",

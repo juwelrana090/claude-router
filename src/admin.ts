@@ -13,6 +13,7 @@ import { DATA_DIR, DB_FILE, SETTING_DEFAULTS, allSettings, db, setSetting } from
 import { userCount } from "./auth";
 import { budgetReason } from "./capacity";
 import { openaiHeaders, toOpenAIRequest } from "./openai";
+import { dsWebCallOnce } from "./deepseek-web";
 import { CATALOG } from "./catalog";
 import { clearMemory, deleteMemory, listMemory } from "./memory";
 import * as history from "./history";
@@ -120,6 +121,12 @@ function keyView(envName: string): KeyView {
 
 /** Plain-language next step for a failed connection test. */
 function testHint(status: number, detail: string, baseURL: string, protocol: string): string | null {
+  if (protocol === "deepseek-web") {
+    if (status === 401) return "DeepSeek web refused the userToken. Open chat.deepseek.com in the browser, log in, copy the \"userToken\" value from DevTools > Application > Local Storage, and paste it as the key in .env.";
+    if (status === 429) return "DeepSeek web says too many requests. Wait a bit - the web account is rate-limited like any free chat user.";
+    if (status >= 500) return "DeepSeek web itself failed or answered in an unexpected format. Try again; if it keeps failing, the web app may have changed.";
+    return null;
+  }
   const url = protocol === "openai" ? `${baseURL}/chat/completions` : `${baseURL}/v1/messages`;
   if (status === 404 && /path|not found|404|no route/i.test(detail)) {
     return `The address looks wrong: the router called ${url} and the server does not have it. Fix the Base URL in Providers > Edit (do not add /v1/messages yourself; for Ollama cloud use https://ollama.com).`;
@@ -982,8 +989,14 @@ on("POST", /^\/admin\/models\/([^/]+)\/test$/, async (req, res, [alias]) => {
   const timer = setTimeout(() => ac.abort(), 20000);
   try {
 const isOpenAI = p.protocol === "openai";
+    const isDSW = p.protocol === "deepseek-web";
     const probe = { model: m.model, max_tokens: 1, messages: [{ role: "user", content: "hi" }] };
-    const up = await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
+    const up = isDSW ? await (async () => {
+      // Drive the whole web flow, then hand the router the answer shaped like a normal Anthropic response.
+      const r = await dsWebCallOnce(m, p, keyName, probe, ac.signal);
+      const body = r.raw || JSON.stringify({ error: { message: `DeepSeek web HTTP ${r.status}` } });
+      return new Response(body, { status: r.status });
+    })() : await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
       method: "POST",
       headers: isOpenAI ? openaiHeaders(p, keyName) : buildHeaders(req, p, keyName),
       body: isOpenAI ? toOpenAIRequest(probe, m, p) : JSON.stringify(probe),

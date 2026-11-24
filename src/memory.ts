@@ -6,6 +6,7 @@ import { costOf } from "./pricing";
 import { db, getSetting } from "./db";
 import * as history from "./history";
 import { callOnce } from "./openai";
+import { dsWebCallOnce } from "./deepseek-web";
 import { buildBody, buildHeaders, keyOrder } from "./routing";
 import type { InFlight, RecentEntry } from "./live";
 import * as live from "./live";
@@ -197,8 +198,10 @@ async function callSummariser(alias: string, prompt: string): Promise<{ text: st
   const started = Date.now();
   const payload = { model: alias, max_tokens: 2000, system: SYSTEM, messages: [{ role: "user", content: prompt }], stream: false };
   let status: number, raw: string, j: Json;
-  if (p.protocol === "openai") {
-    const r = await callOnce(m, p, key, payload, AbortSignal.timeout(90_000));
+  if (p.protocol === "openai" || p.protocol === "deepseek-web") {
+    const r = p.protocol === "deepseek-web"
+      ? await dsWebCallOnce(m, p, key, payload, AbortSignal.timeout(90_000))
+      : await callOnce(m, p, key, payload, AbortSignal.timeout(90_000));
     status = r.status; raw = r.raw; j = r.json;
   } else {
     const res = await fetch(`${p.baseURL}/v1/messages`, {

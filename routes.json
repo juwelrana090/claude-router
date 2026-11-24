@@ -35,6 +35,15 @@
         "ollama"
       ],
       "disabled": false
+    },
+    "deepseek-web": {
+      "baseURL": "https://chat.deepseek.com",
+      "auth": "bearer",
+      "keys": [
+        "DS_WEB_USER_TOKEN"
+      ],
+      "protocol": "deepseek-web",
+      "dailyRequests": 200
     }
   },
   "models": {
@@ -67,6 +76,21 @@
       "provider": "ollama-cloud",
       "model": "deepseek-v4.1-flash",
       "key": "OLLAMA_CLOUD_API_KEY"
+    },
+    "ds-web": {
+      "provider": "deepseek-web",
+      "model": "deepseek-v4-flash",
+      "key": "DS_WEB_USER_TOKEN"
+    },
+    "ds-web-think": {
+      "provider": "deepseek-web",
+      "model": "deepseek-v4-flash-think",
+      "key": "DS_WEB_USER_TOKEN"
+    },
+    "ds-web-search": {
+      "provider": "deepseek-web",
+      "model": "deepseek-v4-flash-search",
+      "key": "DS_WEB_USER_TOKEN"
     }
   }
 }

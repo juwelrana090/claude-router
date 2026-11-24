@@ -174,6 +174,15 @@ Provider catalog note: Azure OpenAI, AWS Bedrock and Google Vertex are **not** s
 their token/signature auth schemes are not implemented. Use their OpenAI-compatible
 gateways or put a LiteLLM proxy (catalog card) in front of them.
 
+### DeepSeek web provider (`protocol: "deepseek-web"`)
+
+Drives your own chat.deepseek.com account natively (no third-party service): the router
+exchanges the browser `userToken` for an access token, solves the site's proof-of-work
+challenge with its own vendored wasm (same bytes as the site ships), opens a session and
+speaks the patch-SSE protocol — mapped to Anthropic messages, thinking/search included.
+Setup: copy `userToken` from DevTools → Application → Local Storage → chat.deepseek.com
+into `DS_WEB_USER_TOKEN` (see `.env.example`; token is cached 1 h, refreshed automatically).
+
 ---
 
 ## Development

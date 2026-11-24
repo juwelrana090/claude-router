@@ -7,7 +7,7 @@ import { useAuth } from '../auth';
 
 interface CatModel { id: string; label: string; coding?: boolean; free?: boolean; price?: { in: number; out: number; cacheRead?: number; peak?: boolean }; note?: string }
 interface Entry {
-  id: string; name: string; tier: 'local' | 'free' | 'freemium' | 'cheap'; protocol: 'anthropic' | 'openai'; baseURL: string;
+  id: string; name: string; tier: 'local' | 'free' | 'freemium' | 'cheap'; protocol: 'anthropic' | 'openai' | 'deepseek-web'; baseURL: string;
   auth: string; keyUrl?: string; pricingUrl?: string; summary: string; limits?: string; privacy?: string; steps: string[];
   models: CatModel[]; customModelHint?: string; suggestedLimits?: { dailyRequests?: number; dailyTokens?: number }; verified: string;
   installed: string | null; addedModels: string[];
@@ -93,7 +93,7 @@ export default function CatalogPage() {
           >
             <Typography.Paragraph style={{ marginBottom: 8 }}>{e.summary}</Typography.Paragraph>
             <Space size={[4, 4]} wrap style={{ marginBottom: 8 }}>
-              <Tag>{e.protocol === 'openai' ? 'OpenAI style (converted)' : 'Claude format'}</Tag>
+              <Tag>{e.protocol === 'openai' ? 'OpenAI style (converted)' : e.protocol === 'deepseek-web' ? 'DeepSeek web (driven by the router)' : 'Claude format'}</Tag>
               <Tag style={{ fontFamily: 'monospace' }}>{e.baseURL}</Tag>
             </Space>
             {e.limits && <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 6 }}><b>Limits:</b> {e.limits}</Typography.Paragraph>}

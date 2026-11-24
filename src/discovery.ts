@@ -1,5 +1,6 @@
 import type { ProviderCfg } from "./config";
 import { openaiHeaders } from "./openai";
+import { DS_MODELS } from "./deepseek-web";
 
 /**
  * Dynamic model discovery: asks the provider for its live model list so the UI can offer
@@ -34,6 +35,7 @@ export async function listUpstreamModels(name: string, p: ProviderCfg): Promise<
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.models;
   const keyName = p.keys?.find((k) => process.env[k]);
+  if (p.protocol === "deepseek-web") return [...DS_MODELS]; // chat.deepseek.com has no /models endpoint
   const isOpenAI = p.protocol === "openai";
   const headers = isOpenAI
     ? openaiHeaders(p, keyName ?? "")

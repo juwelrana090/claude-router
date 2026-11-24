@@ -54,7 +54,7 @@ export const EXTRA_ORIGINS: { origin: string; host: string }[] = String(process.
 // ---------- config shape ----------
 export type AuthMode = "bearer" | "x-api-key" | "both" | "none";
 
-export type Protocol = "anthropic" | "openai";
+export type Protocol = "anthropic" | "openai" | "deepseek-web";
 
 export interface ProviderCfg {
   baseURL: string;
@@ -344,6 +344,9 @@ export function baseURLProblem(baseURL: string, protocol: Protocol): string | nu
   if (protocol === "anthropic" && /\/v1$/.test(path)) {
     return "remove /v1 from the end: for an Anthropic-style provider the router adds /v1/messages itself";
   }
+  if (protocol === "deepseek-web" && (path !== "" || u.hostname !== "chat.deepseek.com")) {
+    return "for a DeepSeek web provider the address must be exactly https://chat.deepseek.com (the router talks to its own endpoints)";
+  }
   if (u.hostname === "ollama.com" && path === "/api") {
     return "Ollama cloud's Anthropic-style address is https://ollama.com (without /api); /api only serves Ollama's own format";
   }
@@ -376,8 +379,8 @@ export function validateProviderBody(body: Record<string, unknown>, existing?: P
 
   let protocol: Protocol = existing?.protocol ?? "anthropic";
   if (body.protocol !== undefined) {
-    if (body.protocol !== "anthropic" && body.protocol !== "openai") {
-      errors.push({ field: "protocol", message: "must be anthropic or openai" });
+    if (body.protocol !== "anthropic" && body.protocol !== "openai" && body.protocol !== "deepseek-web") {
+      errors.push({ field: "protocol", message: "must be anthropic, openai or deepseek-web" });
     } else protocol = body.protocol;
   }
   {
@@ -406,7 +409,7 @@ export function validateProviderBody(body: Record<string, unknown>, existing?: P
 
   if (errors.length) throw new ValidationError(errors);
 const out: ProviderCfg = { baseURL, auth, keys: existing?.keys ?? [], dropBeta, dropBodyFields, disabled };
-  if (protocol === "openai") out.protocol = "openai";
+  if (protocol !== "anthropic") out.protocol = protocol;
   if (dailyRequests !== undefined) out.dailyRequests = dailyRequests;
   if (dailyTokens !== undefined) out.dailyTokens = dailyTokens;
   return out;

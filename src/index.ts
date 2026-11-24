@@ -17,6 +17,7 @@ import { costOf } from "./pricing";
 import { budgetReason, fitToWindow, shrinkWorthy } from "./capacity";
 import { classifyFailure } from "./failure";
 import { adaptOpenAI, openaiHeaders, toOpenAIRequest } from "./openai";
+import { adaptDeepSeekWeb, dsWebUpstream } from "./deepseek-web";
 import { getSetting } from "./db";
 import { buildBody, buildHeaders, directModel, keyOrder, resolveModel } from "./routing";
 
@@ -373,6 +374,7 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       continue;
     }
     const isOpenAI = p.protocol === "openai";
+    const isDSW = p.protocol === "deepseek-web";
     const spent = budgetReason(m.provider, p);
     if (spent) {
       addTrace({ route: routeName, outcome: "skipped", detail: `${m.provider}: ${spent}` });
@@ -410,7 +412,9 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
       for (let attempt = 0; ; attempt++) {
         let up: Response;
         try {
-          up = await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
+          // A DeepSeek-web provider drives the whole web flow itself (token, PoW, session, SSE);
+          // it resolves to a Response with a mapped error status instead of throwing.
+          up = isDSW ? await dsWebUpstream(m, p, keyName, fit.body, ac.signal) : await fetch(isOpenAI ? `${p.baseURL}/chat/completions` : `${p.baseURL}/v1/messages`, {
             method: "POST",
             headers: isOpenAI ? openaiHeaders(p, keyName) : buildHeaders(req, p, keyName),
             body: isOpenAI ? toOpenAIRequest(fit.body, m, p) : buildBody(fit.body, m, p),
@@ -457,7 +461,9 @@ async function proxyMessages(req: IncomingMessage, res: ServerResponse): Promise
         if (fit.saved > 0 && track) track.guardSaved = (track.guardSaved ?? 0) + fit.saved;
         if (routeName !== alias) console.warn(`[ROUTER] asked "${body.model}" (${alias}) but served by ${routeName}: ${summary()}`);
         // An OpenAI-style provider answers in its own format: convert it, then everything below is unchanged.
-        const answer = isOpenAI ? await adaptOpenAI(up, body.stream === true, m.model, estimateTokens(fit.body)) : up;
+        const answer = isOpenAI ? await adaptOpenAI(up, body.stream === true, m.model, estimateTokens(fit.body))
+          : isDSW ? await adaptDeepSeekWeb(up, body.stream === true, m.model, estimateTokens(fit.body))
+          : up;
         return relay(answer, res, body, routeName, m, keyName, started, track);
       }
     }
